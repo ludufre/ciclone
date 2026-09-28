@@ -1,0 +1,37 @@
+# CICLONE M4 (SCAFFOLD) - plataforma Renode para o NXP LPC1756 (Cortex-M3).
+# ATENÇÃO: o Renode NÃO traz a família LPC176x. O núcleo Cortex-M3 + NVIC + memórias
+# abaixo funcionam; TODOS os periféricos do LPC176x marcados [TODO] precisam ser
+# escritos (C# em peripherals/, ou .py p/ mock) - este é o grosso do trabalho do M4.
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m3"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    systickFrequency: 96000000
+    -> cpu@0
+
+# LPC1756: 256 KB flash @ 0x0, 32 KB SRAM (16K local @0x10000000 + 16K AHB @0x2007C000)
+flash: Memory.MappedMemory @ sysbus 0x00000000
+    size: 0x40000
+
+sram_local: Memory.MappedMemory @ sysbus 0x10000000
+    size: 0x4000
+
+sram_ahb: Memory.MappedMemory @ sysbus 0x2007C000
+    size: 0x4000
+
+# ---- Periféricos do LPC176x [TODO: implementar em C#] ----------------------
+# O firmware (ver src/lpc175x/ + src/config-mk3) usa, no caminho crítico:
+#   SSP0  @ 0x40088000  -> SPI mestre p/ o FPGA  (PONTE p/ o seam SPI do ciclone)
+#   GPDMA @ 0x50004000  -> DMA do SSP
+#   GPIO  @ 0x2009C000  -> FPGA chip-select (P0.16), PROG_B/INIT_B/DONE/CCLK/DIN, CIC, reset
+#   RIT   @ 0x400B0000  -> timer/ticks
+#   SYSCON@ 0x400FC000  -> PLL0/clock (pode ser mock: firmware só espera locks)
+#   RTC   @ 0x40024000  -> relógio
+#   USB   @ 0x5000C000  -> device CDC (FxPakPro)  [EXPERIMENTAL no Renode; ver M2.5]
+#
+# Recomendado: começar implementando SSP0 como uma ponte: cada byte escrito no DR
+# do SSP é encaminhado por socket ao runtime do ciclone (que chama o FpgaModel via
+# o seam), e a resposta volta no DR. Assim o .im3 REAL fala com o MESMO FpgaModel
+# usado nos M2/M3, fechando a co-simulação de 3 núcleos.

@@ -1,0 +1,21 @@
+# CICLONE M4 (SCAFFOLD) - script de execução do .im3 REAL no Renode.
+# Pré-requisitos NÃO triviais (ver renode/README.md): periféricos LPC176x em C# +
+# o binário .im3 real (gerar com arm-none-eabi-gcc ou o Docker do sd2snes) +
+# a ponte SSP0<->seam SPI do ciclone.
+
+using sysbus
+mach create "sd2snes-mk3"
+machine LoadPlatformDescription @renode/lpc1756.repl
+
+# O firmware é flasheado em 0xc000 (CONFIG_FW_START) após um header de 0x100 (SNS3).
+# Carregar o .bin "cru" no endereço de flash do firmware:
+# sysbus LoadBinary @build/firmware.im3 0xc000
+# (ou converter p/ ELF e: sysbus LoadELF @build/firmware.elf)
+
+# [TODO] conectar SSP0 ao runtime do ciclone (ponte por socket -> seam -> FpgaModel):
+# emulation CreateServerSocketTerminal 3333 "spi-bridge"
+# connector Connect sysbus.ssp0 spi-bridge
+
+# showAnalyzer sysbus.uart3   # console de debug do firmware (921600 baud)
+# start
+echo "SCAFFOLD: implemente os periféricos LPC176x e a ponte SSP0<->seam antes de 'start'."

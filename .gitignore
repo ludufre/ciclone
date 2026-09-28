@@ -1,0 +1,26 @@
+# symlinks p/ checkouts locais (recriar via tools/setup.sh)
+/extern/
+
+# saídas de build
+/build/
+*.o
+*.a
+*.so
+*.dylib
+obj/
+out/
+
+# Verilator (M3)
+/fpga_model/verilated/
+obj_dir/
+
+# imagens de teste do SD
+*.img
+
+.DS_Store
+
+# python
+__pycache__/
+
+# config local (servidor de build, checkout da firmware)
+.ciclone.env
