@@ -347,8 +347,8 @@ cobre nada que precise de jogo rodando (menu in-game, savestates, outros cores),
 ## A imagem do SD
 
 `tools/make_sdimg.sh` cria `build/sdcard.img` (FAT32, 48 MB) com `/sd2snes/m3nu.bin` + `igmenu.bin` (o
-menu e o shell in-game que a firmware carrega; do `bin/` da árvore da firmware ou, na falta, do
-`build/menu/`) + um `fpga_base.bi3` dummy, e uma **árvore de teste**
+menu e o shell in-game que a firmware carrega: o MAIS RECENTE entre o `bin/` da árvore da firmware e o
+`build/menu/`; os scripts da janela recriam a imagem sozinhos quando esse menu muda) + um `fpga_base.bi3` dummy, e uma **árvore de teste**
 (`tools/sd_fixtures.py`) que cobre os casos do browser:
 
 | Entrada | Caso |

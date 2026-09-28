@@ -324,7 +324,8 @@ timing, audio.
 ## The SD image
 
 `tools/make_sdimg.sh` creates `build/sdcard.img` (FAT32, 48 MB) with `/sd2snes/m3nu.bin` + `igmenu.bin`
-(the menu the firmware loads; taken from the firmware tree's `bin/`, else from `build/menu/`), a dummy
+(the menu the firmware loads: the NEWER of the firmware tree's `bin/` and `build/menu/`; the window
+scripts rebuild the image by themselves when that menu changes), a dummy
 `fpga_base.bi3`, and a **test tree** (`tools/sd_fixtures.py`): a loose ROM, an MSU-1 folder, a folder with
 two ROMs and an empty folder. It uses macOS-native `hdiutil` - no mtools; the `._*` files macOS writes to
 FAT are removed before unmounting.

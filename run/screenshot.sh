@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/.."
 BSNES="extern/bsnes-plus/bsnes"
-[ -f build/sdcard.img ] || bash tools/make_sdimg.sh
+bash tools/ensure_sd.sh
 [ -f build/libsd2snesfw.a ] || bash firmware_lib/build.sh
 [ -f "$BSNES/out/libsnes.a" ] || ( cd "$BSNES" && make platform=osx profile=compatibility library )
 clang++ -std=gnu++17 -O2 -I include -I fpga_model -I "$BSNES/snes/libsnes" \

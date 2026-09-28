@@ -10,7 +10,7 @@
 set -e
 cd "$(dirname "$0")/.."
 KEYS="${1:?keys}"; SHOTS="${2:?shots}"; FRAMES="${3:-}"; IMG="${4:-build/sdcard.img}"
-[ -f "$IMG" ] || bash tools/make_sdimg.sh "$IMG" >/dev/null
+if [ "$IMG" = build/sdcard.img ]; then bash tools/ensure_sd.sh >/dev/null; else [ -f "$IMG" ] || bash tools/make_sdimg.sh "$IMG" >/dev/null; fi
 [ -x build/host_runner_fw ] || bash tools/build_all.sh
 mkdir -p build/shots
 PPMS=""; LAST=0
