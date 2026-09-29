@@ -48,6 +48,7 @@
 #define DEVICE_NAME            "sd2snes Mk.III (ciclone host)"
 #define MENU_FILENAME          "/sd2snes/m3nu.bin"
 #define ONBOARDING_FILENAME    "/sd2snes/onboarding.bin"
+#define ONBOARDING_FILENAME    "/sd2snes/onboarding.bin"
 #define FPGA_CONF_EXT          "bi3"
 
 #define CONFIG_FW_START        0xc000
@@ -136,7 +137,11 @@ static inline void ciclone_gpio_clr(void *reg, int bit) {
 #define OUT_BIT(reg, b, val)   do { if (val) SET_BIT(reg, b); else CLEAR_BIT(reg, b); } while (0)
 
 /* ---- GPIO config macros -> no-ops on the host --------------------------- */
-#define GPIO_DIR(reg, b, dir)     do {} while (0)
+/* ...except the SNES reset line: snes_reset() drives it with GPIO_DIR, and the
+   runner has to see it so a menu reload (theme, tour ROM) really restarts the CPU. */
+void ciclone_snes_reset_line(int state);
+#define GPIO_DIR(reg, b, dir)     do { if ((void *)(reg) == (void *)SNES_RESET_REG && (b) == SNES_RESET_BIT) \
+                                         ciclone_snes_reset_line(dir); } while (0)
 #define GPIO_MODE_OUT(reg, b)     do {} while (0)
 #define GPIO_MODE_IN(reg, b)      do {} while (0)
 #define GPIO_MODE_AF(reg, b, af)  do {} while (0)

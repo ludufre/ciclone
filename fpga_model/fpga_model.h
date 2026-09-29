@@ -30,6 +30,21 @@ public:
   virtual uint8_t *psram_ptr() { return nullptr; }
   virtual uint8_t  peek_snescmd(uint16_t off) { (void)off; return 0; }
   virtual uint8_t  mapper() { return 0; }
+
+  // ---- audio do cartucho (DAC MSU-1) ----
+  // O fetcher de SFX do core base (sfxdma.v, FPGA_CMD_SFX_PLAY): toca um PCM da PSRAM
+  // (16-bit estéreo LE, 44100 Hz). Devolve até `frames` quadros estéreo em out[2*frames].
+  virtual int      sfx_samples(int16_t *out, int frames) { (void)out; (void)frames; return 0; }
+  virtual void     sfx_state(uint32_t *base, uint32_t *len) { *base = 0; *len = 0; }
+  // Tudo o que o DAC toca em `frames` quadros (44100 Hz): o fetcher de SFX e o buffer de
+  // 2 KB que o MCU enche por SD-DMA (música do FMV da ficha, tocador de PCM, jingle do
+  // tour). O ponteiro de leitura só anda aqui: o runner chama isto a cada quadro do SNES,
+  // com ou sem janela, e o bit DAC_READ_MSB do status (que o MCU usa para reabastecer)
+  // segue esse relógio.
+  virtual int      cart_samples(int16_t *out, int frames) { return sfx_samples(out, frames); }
+  virtual void     dac_write(const uint8_t *buf, uint32_t len) { (void)buf; (void)len; }  // offload SD->DAC
+  virtual int      dac_playing() { return 0; }
+  virtual int      dac_loud() { return 0; }   // bytes of the 2 KB buffer that are not silence
 };
 
 // modelo ativo p/ o qual o seam C despacha

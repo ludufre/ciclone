@@ -48,17 +48,26 @@ class T:
         if self.verbose:
             print(f"    [{self.name}]", *a, flush=True)
 
-    def sd(self, config: str | None = None, extra: dict | None = None, fixtures: bool = True) -> Path:
+    def sd(self, config: str | None = None, extra: dict | None = None, fixtures: bool = True,
+           onboarding: bool = True, misc: bool = False) -> Path:
         """Imagem do cartão só deste teste (clone APFS de um template em cache)."""
         h = hashlib.sha1()
         h.update((c.MENU_DIR / "m3nu.bin").read_bytes())
-        h.update(repr((config, fixtures, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
-        for f in ("tools/make_sdimg.sh", "tools/sd_fixtures.py"):
+        onb = c.MENU_DIR / "onboarding.bin"
+        if onb.exists():
+            h.update(onb.read_bytes())
+        if misc:
+            for f in sorted((c.SD2SNES / "misc").glob("*")):
+                if f.is_file():
+                    h.update(f.read_bytes())
+        h.update(repr((config, fixtures, onboarding, misc, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
+        for f in ("tools/make_sdimg.sh", "tools/sd_fixtures.py", "tests/menu/ciclone.py"):
             h.update((c.ROOT / f).read_bytes())
         tpl = OUT / "_templates" / f"{h.hexdigest()[:16]}.img"
         with _sd_lock:
             if not tpl.exists():
-                c.make_sd(tpl.with_suffix(".tmp.img"), config=config, fixtures=fixtures, extra=extra)
+                c.make_sd(tpl.with_suffix(".tmp.img"), config=config, fixtures=fixtures, extra=extra,
+                          onboarding=onboarding, misc=misc)
                 tpl.with_suffix(".tmp.img").rename(tpl)
         self._n += 1
         dst = self.dir / f"sd{self._n}.img"

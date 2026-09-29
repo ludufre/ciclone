@@ -10,6 +10,7 @@
 #include "fpga_model.h"
 #include "../include/ciclone_seam.h"
 #include <vector>
+#include <algorithm>
 #include <cstring>
 #include <cstdint>
 #include <mutex>
@@ -59,7 +60,7 @@ constexpr uint32_t MENU_BASE = 0xC00000;  // SRAM_MENU_ADDR (memory.h): menu viv
 enum Phase {
   PH_CMD, PH_SKIP, PH_ADDR, PH_MASK, PH_RAMBASE,
   PH_WRITEMEM, PH_READMEM, PH_SCADDR, PH_SCREAD, PH_SCWRITE,
-  PH_TEST, PH_STATUS,
+  PH_TEST, PH_STATUS, PH_SFX, PH_DACADDR, PH_DACPTR,
 };
 enum MaskWhich { MW_ROM, MW_RAM };
 
@@ -97,6 +98,69 @@ public:
 
   // -------- introspecção --------
   uint8_t *psram_ptr() override { return psram.data(); }
+
+  int sfx_samples(int16_t *out, int frames) override {
+    int k = 0;
+    for (; k < frames && sfx_pos + 4 <= sfx_len; k++, sfx_pos += 4) {
+      uint32_t p = sfx_base + sfx_pos;
+      out[2 * k]     = (int16_t)(psram[p & PSRAM_MASK] | psram[(p + 1) & PSRAM_MASK] << 8);
+      out[2 * k + 1] = (int16_t)(psram[(p + 2) & PSRAM_MASK] | psram[(p + 3) & PSRAM_MASK] << 8);
+    }
+    return k;
+  }
+  void sfx_state(uint32_t *base, uint32_t *len) override { *base = sfx_base; *len = sfx_len; }
+  uint32_t sfx_base = 0, sfx_len = 0, sfx_pos = 0;
+
+  // o DAC do MSU-1: buffer de 2 KB (512 quadros estéreo 16-bit), escrito pelo SD-DMA do MCU
+  // no ponteiro de escrita (SETADDR|TGT_DACBUF) e lido a 44100 Hz enquanto toca (e1 pausa,
+  // e2 toca, e3 posiciona a leitura). Metade lida = bit $4000 do status: o MCU reabastece
+  // a metade que acabou de ser lida (msu1.c menu_sfx_pump). A leitura anda pelo RELÓGIO REAL,
+  // como no console, e não por quadro do SNES: consumir um quadro de uma vez (735 amostras =
+  // mais que o buffer inteiro) fazia o MCU nunca ver a troca de metade, e o buffer tocava em
+  // loop. O que foi lido é copiado na hora para uma fila que o áudio da janela esvazia.
+  uint8_t  dac_buf[2048] = {};
+  uint16_t dac_wr = 0, dac_rd = 0;
+  int      dac_on = 0;
+  double   dac_t = 0, dac_frac = 0;
+  std::vector<int16_t> dac_out;
+  static double now_s() { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec * 1e-9; }
+  void dac_advance() {
+    if (!dac_on) return;
+    double t = now_s();
+    dac_frac += (t - dac_t) * 44100.0;
+    dac_t = t;
+    int n = (int)dac_frac;
+    if (n <= 0) return;
+    dac_frac -= n;
+    if (n > 4410) n = 4410;                        // a stall (debugger, host hiccup): drop it
+    for (int k = 0; k < n; k++) {
+      for (int c = 0; c < 2; c++) dac_out.push_back((int16_t)(dac_buf[dac_rd + 2 * c] | dac_buf[dac_rd + 2 * c + 1] << 8));
+      dac_rd = (dac_rd + 4) & 2047;
+    }
+    static FILE *dump = nullptr; static bool dump_init = false;   // CICLONE_DAC_PCM=<file>: what the DAC read
+    if (!dump_init) { dump_init = true; if (const char *f = getenv("CICLONE_DAC_PCM")) dump = fopen(f, "wb"); }
+    if (dump) { fwrite(dac_out.data() + dac_out.size() - 2 * n, 2, 2 * n, dump); fflush(dump); }
+    if (dac_out.size() > 2 * 8820) dac_out.erase(dac_out.begin(), dac_out.end() - 2 * 8820);  // nobody listening
+  }
+  void dac_write(const uint8_t *buf, uint32_t len) override {
+    dac_advance();
+    for (uint32_t i = 0; i < len; i++) { dac_buf[dac_wr] = buf[i]; dac_wr = (dac_wr + 1) & 2047; }
+  }
+  int dac_playing() override { return dac_on; }
+  int dac_loud() override { int n = 0; for (uint8_t b : dac_buf) n += b != 0; return n; }
+  int cart_samples(int16_t *out, int frames) override {
+    int got = sfx_samples(out, frames);
+    for (int k = got; k < frames; k++) out[2 * k] = out[2 * k + 1] = 0;
+    dac_advance();
+    int m = (int)std::min<size_t>((size_t)frames, dac_out.size() / 2);
+    for (int k = 0; k < m; k++)
+      for (int c = 0; c < 2; c++) {
+        int v = out[2 * k + c] + dac_out[2 * k + c];
+        out[2 * k + c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+      }
+    dac_out.erase(dac_out.begin(), dac_out.begin() + 2 * m);
+    return std::max(got, m);
+  }
   uint8_t  peek_snescmd(uint16_t off) override { return snescmd[off & (SNESCMD_SIZE - 1)]; }
   uint8_t  mapper() override { return map; }
 
@@ -164,6 +228,10 @@ private:
       case PH_CMD: {
         uint8_t hi = tx & 0xf0;
         if      (tx == 0x00) { phase = PH_ADDR; cnt = 3; acc = 0; }                 // SETADDR mem
+        else if (tx == 0x01) { phase = PH_DACADDR; cnt = 2; acc = 0; }              // SETADDR dac_buf
+        else if (tx == 0xe1) { dac_advance(); dac_on = 0; phase = PH_SKIP; }        // DACPAUSE
+        else if (tx == 0xe2) { if (!dac_on) { dac_on = 1; dac_t = now_s(); dac_frac = 0; } phase = PH_SKIP; } // DACPLAY
+        else if (tx == 0xe3) { phase = PH_DACPTR; cnt = 2; acc = 0; }               // DACSETPTR
         else if (tx == 0x10) { phase = PH_MASK; cnt = 3; acc = 0; mask_which = MW_ROM; }
         else if (tx == 0x20) { phase = PH_MASK; cnt = 3; acc = 0; mask_which = MW_RAM; }
         else if (tx == 0x21) { phase = PH_RAMBASE; }
@@ -175,7 +243,9 @@ private:
         else if (tx == 0xd1) { phase = PH_SCREAD; }                                 // SNESCMD read
         else if (tx == 0xd2) { phase = PH_SCWRITE; sc_wr_first = 1; }               // SNESCMD write
         else if (tx == 0xf0) { phase = PH_TEST; }                                   // TEST
-        else if (tx == 0xf1) { phase = PH_STATUS; status_idx = 2; }                 // GETSTATUS
+        else if (tx == 0xf1) { dac_advance(); phase = PH_STATUS; status_idx = 2; }  // GETSTATUS
+        else if (tx == 0xfb) { phase = PH_SFX; cnt = 6; acc = 0; }                  // SFX_PLAY base+len
+        else if (tx == 0xfc) { sfx_pos = sfx_len; phase = PH_SKIP; }                // SFX_DISABLE: abort the fetcher
         else                 { phase = PH_SKIP; }
         return 0;
       }
@@ -207,8 +277,23 @@ private:
                            snescmd[snescmd_addr & (SNESCMD_SIZE - 1)] = tx;
                            snescmd_addr = (snescmd_addr + 1) & (SNESCMD_SIZE - 1); sc_wr_first = 0; }
         return 0;  // 2º byte (dummy) ignorado
+      case PH_SFX:   // base[23:0] then len[23:0]; the last byte kicks it (newest wins)
+        acc = (acc << 8) | tx;
+        if (--cnt == 3) { sfx_base = acc & PSRAM_MASK; acc = 0; }
+        else if (cnt == 0) {
+          sfx_len = acc & 0xFFFFFF; sfx_pos = 0; phase = PH_SKIP;
+          // sfxdma.v writes the effect into dac_buf and pads it with silence: whatever the
+          // MCU streamed there before (a music clip cut short) is gone, not looped
+          memset(dac_buf, 0, sizeof(dac_buf));
+        }
+        return 0;
+      case PH_DACADDR:
+        acc = (acc << 8) | tx; if (--cnt == 0) { dac_wr = acc & 2047; phase = PH_SKIP; } return 0;
+      case PH_DACPTR:
+        acc = (acc << 8) | tx; if (--cnt == 0) { dac_advance(); dac_rd = acc & 2047; phase = PH_SKIP; } return 0;
       case PH_TEST: return 0xa5;
-      case PH_STATUS: { uint8_t v = (status_idx == 2) ? (status >> 8) : (status & 0xff);
+      case PH_STATUS: { uint16_t st = (status & ~0x4000) | (dac_rd >= 1024 ? 0x4000 : 0);
+                        uint8_t v = (status_idx == 2) ? (st >> 8) : (st & 0xff);
                         if (--status_idx == 0) phase = PH_SKIP; return v; }
       case PH_SKIP: default: return 0;
     }
@@ -284,5 +369,9 @@ int  ciclone_spi_mcu_rdy(void)  { std::lock_guard<std::mutex> lk(g_model_mtx); r
 void ciclone_fpga_dma_write(const uint8_t *buf, uint32_t len) {
   std::lock_guard<std::mutex> lk(g_model_mtx);
   if (ciclone::active_model()) ciclone::active_model()->dma_write(buf, len);
+}
+void ciclone_fpga_dac_write(const uint8_t *buf, uint32_t len) {
+  std::lock_guard<std::mutex> lk(g_model_mtx);
+  if (ciclone::active_model()) ciclone::active_model()->dac_write(buf, len);
 }
 }

@@ -30,6 +30,9 @@ int     ciclone_spi_mcu_rdy(void);     /* linha FPGA_MCU_RDY: 1=pronto */
  * (setado por set_mcu_addr via SPI 0x00) e avança o cursor. Chamado pelo shim
  * de diskio quando ff_sd_offload está ativo (espelha o fpga_sddma do hardware). */
 void    ciclone_fpga_dma_write(const uint8_t *buf, uint32_t len);
+/* O mesmo offload com alvo dac_buf (sd_offload_tgt = 1): o buffer de 2 KB do DAC do
+ * MSU-1, no ponteiro de escrita que set_dac_addr posicionou. */
+void    ciclone_fpga_dac_write(const uint8_t *buf, uint32_t len);
 
 /* ---- Lado SNES (chip sd2snes do bsnes -> runtime do host) -----------------
  * O chip do bsnes chama estes hooks C; o host_runner os implementa (forte),

@@ -10,3 +10,17 @@
 void cli_entrycheck(void) {}   /* no serial console on the host */
 void cli_init(void) {}
 void cli_loop(void) {}
+
+/* SNES reset line (GPIO_DIR on SNES_RESET_REG/BIT, see config.h). The runner reads
+   both flags between frames: while held the CPU does not run, and the release is a
+   reset of the emulated console -- that is what a menu reload looks like to it. */
+volatile int ciclone_snes_in_reset;
+volatile int ciclone_snes_reset_edge;
+void ciclone_snes_reset_line(int state) {
+  if (state) {
+    ciclone_snes_in_reset = 1;
+  } else if (ciclone_snes_in_reset) {
+    ciclone_snes_in_reset = 0;
+    ciclone_snes_reset_edge = 1;
+  }
+}

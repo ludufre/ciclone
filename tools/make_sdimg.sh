@@ -26,8 +26,16 @@ MNT="$(df 2>/dev/null | grep "$DEV" | awk '{print $NF}' | head -1)"
 [ -n "$MNT" ] || { echo "mount failed"; exit 1; }
 mkdir -p "$MNT/sd2snes"
 cp "$M3NU" "$MNT/sd2snes/m3nu.bin"
-ONB="$ROOT/extern/sd2snes/bin/onboarding.bin"
-[ -f "$ONB" ] && cp "$ONB" "$MNT/sd2snes/onboarding.bin"   # onboarding tour ROM
+# first-boot tour ROM, from the same folder as the menu (SD_NO_ONBOARDING=1 leaves it out)
+ONB="${ONBOARDING:-$(dirname "$M3NU")/onboarding.bin}"
+[ -f "$ONB" ] && [ "${SD_NO_ONBOARDING:-0}" != "1" ] && cp "$ONB" "$MNT/sd2snes/onboarding.bin"
+# the release's sound files and the tour's welcome clip (misc/ of the sd2snes tree);
+# SD_MISC=0 leaves them out (the test harness does, unless a test asks)
+if [ "${SD_MISC:-1}" = "1" ]; then
+  for f in menu.spc sfx_cursor.pcm sfx_confirm.pcm sfx_back.pcm sfx_error.pcm welcome.fmv welcome.pcm; do
+    [ -f "$ROOT/extern/sd2snes/misc/$f" ] && cp "$ROOT/extern/sd2snes/misc/$f" "$MNT/sd2snes/$f"
+  done
+fi
 IGM="${IGMENU:-$(dirname "$M3NU")/igmenu.bin}"
 [ -f "$IGM" ] && cp "$IGM" "$MNT/sd2snes/igmenu.bin"          # in-game menu shell (bank $C8)
 printf 'CICLONE-DUMMY-FPGA-BITSTREAM' > "$MNT/sd2snes/fpga_base.bi3"

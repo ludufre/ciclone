@@ -48,7 +48,15 @@ static void vr(const uint16_t *data, unsigned width, unsigned height) {
 static void ipoll(void) {}
 static int16_t g_buttons[16] = {0};   // estado dos botões (atualizado pelo SDL no modo --gui)
 static int16_t istate(bool, unsigned, unsigned, unsigned id) { return (id < 16) ? g_buttons[id] : 0; }
-static void asample(uint16_t, uint16_t) {}
+// audio: the window plays the S-SMP's output (the menu's music) mixed with the cartridge's
+// DAC as far as the FPGA model produces it (the menu's sound effects: FpgaModel::sfx_samples);
+// the headless modes drop it.
+static bool g_audio_on = false;
+static std::vector<int16_t> g_audio;
+static void asample(uint16_t l, uint16_t r) {
+  if (!g_audio_on) return;
+  g_audio.push_back((int16_t)l); g_audio.push_back((int16_t)r);
+}
 
 // Ritmo (modo --serve): a firmware roda em tempo real e o SNES emulado, solto, roda dezenas de
 // vezes mais rápido -- o tempo do SNES encolhe em relação ao do MCU e abrem raças de handshake
@@ -99,7 +107,35 @@ static inline void pace_chip(uint32_t addr) {
     if (g_speed > 0) pace(g_frame + ciclone_snes_frame_pos() / (1364.0 * 262.0));
   }
 }
-static void paced_run(void) { snes_run(); pace((double)g_frame + 1); }
+// The firmware's SNES reset line (hal_host misc_stubs.c): held = the CPU does not run,
+// released = reset the console, which re-reads the vectors from whatever the MCU just
+// loaded into PSRAM (a menu reload, the tour ROM). The first boot's release lands before
+// the CPU ran anything useful, so resetting then changes nothing.
+extern "C" volatile int ciclone_snes_in_reset, ciclone_snes_reset_edge;
+// the cart's DAC, one SNES frame of it (44100 / 60.0988 Hz): pulled every frame, window or
+// not, since the MCU refills the DAC buffer by the halves this consumes
+static std::vector<int16_t> g_cart;
+static void cart_frame(void) {
+  static double acc = 0;
+  acc += 44100.0 / 60.0988;
+  int n = (int)acc;
+  acc -= n;
+  g_cart.assign((size_t)n * 2, 0);
+  ciclone_model_lock();
+  if (ciclone::active_model()) ciclone::active_model()->cart_samples(g_cart.data(), n);
+  ciclone_model_unlock();
+  // CICLONE_CART_PCM=<file>: the cart's DAC as it played, raw 44100 Hz 16-bit stereo (to check
+  // what the MCU streamed without listening)
+  static FILE *dump = nullptr; static bool dump_init = false;
+  if (!dump_init) { dump_init = true; if (const char *f = getenv("CICLONE_CART_PCM")) dump = fopen(f, "wb"); }
+  if (dump) { fwrite(g_cart.data(), 2, g_cart.size(), dump); fflush(dump); }
+}
+static void snes_frame(void) {
+  if (ciclone_snes_reset_edge) { ciclone_snes_reset_edge = 0; snes_reset(); }
+  if (!ciclone_snes_in_reset) snes_run();
+  cart_frame();
+}
+static void paced_run(void) { snes_frame(); pace((double)g_frame + 1); }
 
 // ---- hooks FORTES do chip sd2snes (sobrescrevem os weak do libsnes) ----
 extern "C" {
@@ -188,7 +224,7 @@ static void parse_shots(const char *arg) {
 // para --fwlog (line-buffered, o harness lê ao vivo). Comandos (uma linha, resposta "ok ..."):
 //   step N              roda N quadros com os botões atuais     -> ok <quadro>
 //   buttons MASK        segura os botões (hex, bit = id libsnes) -> ok
-//   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam psram snescmd -> ok <hex>
+//   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam aram psram snescmd -> ok <hex>
 //   shot PATH           grava o último quadro em PPM             -> ok
 //   quit
 extern "C" uint8_t *ciclone_snes_memory(unsigned id, unsigned *size);
@@ -217,7 +253,7 @@ static void serve_loop(ciclone::FpgaModel *m) {
       static const char hx[] = "0123456789abcdef";
       auto put = [&](uint8_t v) { out += hx[v >> 4]; out += hx[v & 15]; };
       int id = !strcmp(space, "wram") ? 0 : !strcmp(space, "vram") ? 1 : !strcmp(space, "cgram") ? 2
-             : !strcmp(space, "oam") ? 3 : -1;
+             : !strcmp(space, "oam") ? 3 : !strcmp(space, "aram") ? 4 : -1;
       if (id >= 0) {
         unsigned size = 0; uint8_t *p = ciclone_snes_memory((unsigned)id, &size);
         if (!p || !size) { fprintf(g_proto, "err nomem\n"); fflush(g_proto); continue; }
@@ -233,6 +269,13 @@ static void serve_loop(ciclone::FpgaModel *m) {
         ciclone_model_unlock();
       } else { fprintf(g_proto, "err space\n"); fflush(g_proto); continue; }
       fprintf(g_proto, "ok %s\n", out.c_str());
+    } else if (!strcmp(cmd, "sfx")) {       // the SFX fetcher's last SFX_PLAY: base len
+      uint32_t base = 0, len = 0;
+      ciclone_model_lock(); m->sfx_state(&base, &len); ciclone_model_unlock();
+      fprintf(g_proto, "ok %06x %06x\n", base, len); fflush(g_proto);
+    } else if (!strcmp(cmd, "dac")) {       // the MSU-1 DAC buffer: playing, read and write pointers
+      ciclone_model_lock(); int on = m->dac_playing(), loud = m->dac_loud(); ciclone_model_unlock();
+      fprintf(g_proto, "ok %d %d\n", on, loud); fflush(g_proto);
     } else if (!strcmp(cmd, "shot")) {
       char path[900] = {0}; sscanf(line, "shot %899s", path);
       write_ppm(path, (int)g_frame);
@@ -254,7 +297,7 @@ static void run_scripted_frame(int f) {
   for (auto &k : g_keys)
     if (f >= k.frame && f < k.frame + k.hold)
       for (int i = 0; i < 16; i++) if (k.mask & (1u << i)) g_buttons[i] = 1;
-  snes_run();
+  snes_frame();
   for (auto &s : g_shots) if (s.frame == f) write_ppm(s.path.c_str(), f + 1);
 }
 
@@ -262,7 +305,19 @@ static void run_scripted_frame(int f) {
 #ifdef CICLONE_SDL
 #include <SDL.h>
 static void run_gui(const char *title) {
-  if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL init: %s\n", SDL_GetError()); return; }
+  // The window runs at the console's own speed. With g_speed = 0 the only brake was
+  // SDL's vsync, which is the DISPLAY's refresh (120 Hz on a ProMotion Mac, none at all
+  // when vsync is refused): the menu's pad auto-repeat (16 frames, then every 3) fired
+  // on a normal tap. CICLONE_SPEED still overrides (0 = as fast as it goes).
+  g_speed = 1.0;
+  if (const char *sp = getenv("CICLONE_SPEED")) g_speed = atof(sp);
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) { fprintf(stderr, "SDL init: %s\n", SDL_GetError()); return; }
+  // the console's DSP runs at 32040 Hz, stereo 16-bit; SDL resamples to the device
+  SDL_AudioSpec want = {}, have = {};
+  want.freq = 32040; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024;
+  SDL_AudioDeviceID adev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+  if (adev) { SDL_PauseAudioDevice(adev, 0); g_audio_on = true; }
+  else fprintf(stderr, "SDL audio: %s (sem som)\n", SDL_GetError());
   const int scale = 3;
   SDL_Window *win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                      256*scale, 224*scale, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
@@ -292,13 +347,32 @@ static void run_gui(const char *title) {
         for (auto &m : map) if (m.sc == ev.key.keysym.scancode) g_buttons[m.id] = v;
       }
     }
-    snes_run();  // 1 frame
+    snes_frame();  // 1 frame
+    g_frame++;
+    if (adev && !g_audio.empty()) {
+      // the cart's DAC (44100 Hz, this frame's: cart_frame) mixed into the S-SMP's frame
+      // (32040 Hz), nearest sample
+      size_t n = g_audio.size() / 2, got = g_cart.size() / 2;
+      for (size_t i = 0; got && i < n; i++) {
+        size_t j = i * got / n;
+        for (int c = 0; c < 2; c++) {
+          int v = g_audio[2 * i + c] + g_cart[2 * j + c] * 3 / 4;
+          g_audio[2 * i + c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+        }
+      }
+      // keep at most ~0.15 s queued: past that the emulation ran ahead (a hitch), drop
+      if (SDL_GetQueuedAudioSize(adev) < 32040 * 4 * 15 / 100)
+        SDL_QueueAudio(adev, g_audio.data(), (Uint32)(g_audio.size() * sizeof(int16_t)));
+      g_audio.clear();
+    }
+    pace((double)g_frame);   // real time (CICLONE_SPEED): vsync alone is not a clock
     if (g_w && !g_rgb.empty()) {
       SDL_Rect r = {0,0,(int)g_w,(int)g_h};
       SDL_UpdateTexture(tex, &r, g_rgb.data(), (int)g_w*3);
       SDL_RenderClear(ren); SDL_RenderCopy(ren, tex, &r, NULL); SDL_RenderPresent(ren);
     }
   }
+  if (adev) { g_audio_on = false; SDL_CloseAudioDevice(adev); }
   SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
 }
 #else

@@ -49,19 +49,22 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, DWORD sector, UINT count) {
   if (sd_offload) {
     /* Stream sectors from the image directly into model PSRAM. */
     static uint8_t sec[SECTOR_SIZE];
-    if (sd_offload_partial) {
-      /* Exactly one sector; emit only [start, end). */
-      if (ciclone_sd_read(sector, sec, 1) != 0) return RES_ERROR;
-      uint16_t s = sd_offload_partial_start;
-      uint16_t e = sd_offload_partial_end;
-      if (e > SECTOR_SIZE) e = SECTOR_SIZE;
-      if (s > e) s = e;
-      ciclone_fpga_dma_write(sec + s, (uint32_t)(e - s));
-    } else {
-      for (UINT i = 0; i < count; i++) {
-        if (ciclone_sd_read(sector + i, sec, 1) != 0) return RES_ERROR;
-        ciclone_fpga_dma_write(sec, SECTOR_SIZE);
+    /* The partial range covers the FIRST sector of the call only, and is consumed by it
+       (lpc175x/sdnative.c read_block clears sd_offload_partial after each block): an
+       unaligned f_lseek leaves the flag set, and the whole sectors that follow are full. */
+    for (UINT i = 0; i < count; i++) {
+      if (ciclone_sd_read(sector + i, sec, 1) != 0) return RES_ERROR;
+      uint16_t s = 0, e = SECTOR_SIZE;
+      if (sd_offload_partial) {
+        s = sd_offload_partial_start & 0x1ff;
+        e = sd_offload_partial_end & 0x3ff;
+        if (e > SECTOR_SIZE) e = SECTOR_SIZE;
+        if (s > e) s = e;
+        sd_offload_partial = 0;
       }
+      /* target 1 = the MSU-1 DAC buffer (FMV soundtrack, PCM player): not PSRAM */
+      if (sd_offload_tgt == 1) ciclone_fpga_dac_write(sec + s, (uint32_t)(e - s));
+      else ciclone_fpga_dma_write(sec + s, (uint32_t)(e - s));
     }
     return RES_OK;
   }

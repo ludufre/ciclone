@@ -75,6 +75,11 @@ def _font_decode() -> dict[int, str]:
         import build_const  # type: ignore
 
         dec.update(build_const.DECODE)
+        import fontedit  # type: ignore
+
+        # glyphs no char maps to (the onboarding tour's arrows and progress line): drawn,
+        # not garbage
+        dec.update({c: ch for c, (ch, _) in getattr(fontedit, "TOUR_GLYPHS", {}).items()})
     except Exception:
         pass
     finally:
@@ -99,12 +104,24 @@ def encode_menu_text(s: str) -> str:
 
 
 # ---------------------------------------------------------------- cartão (imagem FAT32)
-def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra: dict | None = None) -> Path:
+def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra: dict | None = None,
+            onboarding: bool = True, misc: bool = False) -> Path:
     """Imagem do cartão com o menu do pacote. `config` = conteúdo do config.yml inicial;
-    `extra` = {caminho no cartão: bytes} gravados por cima da árvore de teste."""
+    `extra` = {caminho no cartão: bytes} gravados por cima da árvore de teste;
+    `onboarding=False` deixa o onboarding.bin (ROM do tour) fora do cartão;
+    `misc=True` põe os arquivos de som que o release traz (menu.spc, sfx_*.pcm e o clipe
+    de boas-vindas do tour, welcome.fmv/.pcm)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, M3NU=str(MENU_DIR / "m3nu.bin"), IGMENU=str(MENU_DIR / "igmenu.bin"),
-               SD_FIXTURES="1" if fixtures else "0")
+               SD_FIXTURES="1" if fixtures else "0", SD_NO_ONBOARDING="0" if onboarding else "1",
+               SD_MISC="1" if misc else "0")
+    # The first-boot tour prompt would sit over the browser in every test: a card is
+    # "already onboarded" (any tour version: 255) unless the test's config names the
+    # key itself.
+    if config is None:
+        config = "---\nOnboardingVersion: 255\n"
+    elif "OnboardingVersion" not in config:
+        config = config.rstrip("\n") + "\nOnboardingVersion: 255\n"
     cfg = None
     if config is not None:
         cfg = dest.with_suffix(".config.yml")
@@ -229,6 +246,21 @@ class Menu:
         self.step(after)
 
     # -- memória
+    def sfx(self) -> tuple[int, int]:
+        """The FPGA model's SFX fetcher (FPGA_CMD_SFX_PLAY): (PSRAM base, byte length) of the
+        last effect the firmware started -- (0, 0) when none."""
+        base, ln = self._cmd("sfx").split()
+        return int(base, 16), int(ln, 16)
+
+    def dac_playing(self) -> bool:
+        """The FPGA model's MSU-1 DAC is playing its 2 KB buffer (the one the MCU streams a
+        .pcm into: FMV soundtrack, PCM player, the tour's welcome jingle)."""
+        return self._cmd("dac").split()[0] == "1"
+
+    def dac_loud(self) -> int:
+        """Bytes of the DAC's 2 KB buffer that are not silence: what a playing DAC loops."""
+        return int(self._cmd("dac").split()[1])
+
     def peek(self, space: str, addr: int, n: int) -> bytes:
         return bytes.fromhex(self._cmd(f"peek {space} {addr:x} {n:x}"))
 
@@ -324,6 +356,12 @@ class Menu:
         row = self.screen()[LIST_TOP + (self.u16("filesel_sel") & 0xFF)]
         return re.split(r"\s{2,}", row.strip())[0] if row.strip() else ""
 
+    def bar_row(self) -> str:
+        """A linha da tela sob a barra de seleção de um menu. bar_yl é a linha-alvo da barra
+        menos 1 (a barra é desenhada a partir da linha de cima); bar_y é o pixel animado,
+        que chega atrasado."""
+        return self.screen()[self.u8("bar_yl") + 1].strip()
+
     def goto(self, name: str, max_steps: int = 40):
         """Move o cursor até a entrada `name` no diretório corrente (só DOWN, a partir do topo)."""
         for _ in range(max_steps):
@@ -335,6 +373,27 @@ class Menu:
 
     def fwlog(self) -> str:
         return self.fwlog_path.read_text(errors="replace") if self.fwlog_path.exists() else ""
+
+    def rgb(self, x: int, y: int) -> tuple[int, int, int]:
+        """Cor do pixel (x, y) em coordenadas de 256x224 (a tela lowres), do quadro atual.
+        Para o que só existe como efeito de PPU (barra de HDMA, sprites), sem Pillow."""
+        ppm = self.workdir / "_px.ppm"
+        self._cmd(f"shot {ppm}")
+        data = ppm.read_bytes()
+        parts, pos = [], 0
+        while len(parts) < 4:                      # P6, largura, altura, maxval
+            while data[pos:pos + 1].isspace():
+                pos += 1
+            end = pos
+            while not data[end:end + 1].isspace():
+                end += 1
+            parts.append(data[pos:end])
+            pos = end
+        w, h = int(parts[1]), int(parts[2])
+        pos += 1
+        px, py = x * w // 256, y * h // 224
+        o = pos + (py * w + px) * 3
+        return data[o], data[o + 1], data[o + 2]
 
     def shot(self, path: Path):
         ppm = path.with_suffix(".ppm")
