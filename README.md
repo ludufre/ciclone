@@ -181,6 +181,19 @@ Recents), Favorites/Recents lists and all 8 languages. A regression test is only
 without the fix: `REF=<commit before the fix>` shows it. The suite needs the symbol maps of the menu under test, which is why it builds the menu
 itself (`tools/build_menu.sh`) instead of using a release `m3nu.bin`.
 
+**Real games** (`tests/menu/test_games.py`): Super Mario World (LoROM) and Donkey Kong Country 3 (HiROM,
+4 MB) are loaded through the menu and played on the FPGA model's mappers, asserting on the game's own WRAM
+state (game mode, Mario moving; DKC3 down to the world map) - and the **in-game menu** over SMW: the
+combo (L+R+Y+Left) opens it, R changes tab, B closes it and Mario walks again. That path is all real code
+(the firmware's NMI stub at `$2A10`, the savestate handler, `igmenu.bin`); what makes it work is the FPGA
+model reproducing `cheat.v`: the interrupt vector hijack, the SNESCMD unlock with the `$C0-$FF` linear
+window, the patched branch operands, the release on the hook's final `jmp ($FFxx)`, the reset hook
+(`$2A7D`), the 10 s holdoff, plus the `ctx.v` register shadows the menu restores on close. The bsnes chip
+feeds it what the cart edge sees outside its own ranges (vector fetch, bus writes, `$4016` reads, /RESET).
+ROMs never go into the repo: point
+`CICLONE_ROMS=<folder>` at your dumps (searched recursively, matched by No-Intro CRC32); without it, or
+without a matching dump, those tests report as skipped, not failed.
+
 Timing fidelity: `CICLONE_SYNC=0` turns off command sync (while the MCU handles a command, SNES accesses
 to `$2A00-$2FFF` wait for it to get back to polling - on hardware the MCU always wins that race; without
 it, 1 in 12 deletes lost the following READDIR even at real time), `CICLONE_SPEED` (default 4x real time
@@ -316,8 +329,9 @@ Ciclone is for **fast iteration**; the **final sign-off** is still a real build 
 - **Case 2** tests the **real binary**, but with **modeled** peripherals, not the silicon.
 
 In practice most loops happen in `run/dev.sh` / `run/test_menu.sh`; the hardware is for closing out.
-Not covered at all: anything that needs a game running (in-game menu, savestates, other cores), hardware
-timing, audio.
+Plain LoROM/HiROM games and the in-game menu run (see *Real games* above), but not covered: savestates
+(the model does not mirror WRAM/VRAM/APU writes like `ctx.v` does, only the registers), coprocessor
+cores, hardware timing, audio.
 
 ---
 
@@ -328,7 +342,10 @@ timing, audio.
 scripts rebuild the image by themselves when that menu changes), a dummy
 `fpga_base.bi3`, and a **test tree** (`tools/sd_fixtures.py`): a loose ROM, an MSU-1 folder, a folder with
 two ROMs and an empty folder. It uses macOS-native `hdiutil` - no mtools; the `._*` files macOS writes to
-FAT are removed before unmounting.
+FAT are removed before unmounting. Its `config.yml` gets `ResetPatch: false` unless the given config names
+the key: with the reset patch on, the reset hook times an H-IRQ against `$4212` to catch a misaligned
+CPU/PPU clock phase and resets until it passes - random on a console, a guaranteed fail on bsnes' fixed
+timing, so every game would reset forever.
 
 ```sh
 bash tools/make_sdimg.sh                       # creates build/sdcard.img

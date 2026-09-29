@@ -52,15 +52,25 @@ FpgaModel *active_model() { return g_active; }
 namespace {
 
 constexpr uint32_t PSRAM_SIZE = 0x1000000, PSRAM_MASK = 0x0FFFFFF; // 16 MB
-constexpr uint32_t SRAM_SIZE  = 0x0080000, SRAM_MASK  = 0x007FFFF; // 512 KB
 constexpr uint16_t SNESCMD_SIZE = 0x400;                           // 1 KB
 constexpr uint16_t FEAT_CMD_UNLOCK = (1 << 5);
 constexpr uint32_t MENU_BASE = 0xC00000;  // SRAM_MENU_ADDR (memory.h): menu vive aqui na PSRAM
+constexpr uint32_t SAVERAM_BASE = 0xE00000;  // SRAM_SAVE_ADDR: the game's save RAM lives in PSRAM too
+
+// cheat.v's global flag word (FPGA_CMD_CHEAT_WRITE index 7: low byte sets, high byte clears)
+enum HookFlag : uint8_t { HK_CHEAT = 1, HK_NMI = 2, HK_IRQ = 4, HK_HOLDOFF = 8, HK_BUTTONS = 16,
+                          HK_WRAM = 32, HK_SAVESTATE = 64 };
+constexpr int HOLDOFF_FRAMES = 601;         // 960M clocks at 96 MHz = 10 s of SNES time
+// ctx.v register shadows in PSRAM (what the in-game menu snapshots and restores on exit)
+constexpr uint32_t CTX_PPUREG = 0xF90500;   // + 2*PA: word {previous write, latest}
+constexpr uint32_t CTX_CPUREG = 0xF90700;   // + addr[8:0]: $4200-$420D, $43x0-$43xA
+constexpr uint32_t CTX_MISC   = 0xF90420;   // + addr[0]: the pad the NMI stub stored at $2BF0/1
 
 enum Phase {
   PH_CMD, PH_SKIP, PH_ADDR, PH_MASK, PH_RAMBASE,
   PH_WRITEMEM, PH_READMEM, PH_SCADDR, PH_SCREAD, PH_SCWRITE,
   PH_TEST, PH_STATUS, PH_SFX, PH_DACADDR, PH_DACPTR,
+  PH_FEATURE, PH_CHEAT_IDX, PH_CHEAT,
 };
 enum MaskWhich { MW_ROM, MW_RAM };
 
@@ -68,15 +78,19 @@ class Behavioral : public FpgaModel {
 public:
   Behavioral() {
     psram.assign(PSRAM_SIZE, 0x00);
-    sram.assign(SRAM_SIZE, 0x00);
     reset();
   }
 
   void reset() override {
     memset(snescmd, 0, sizeof(snescmd));
-    cursor = 0; rom_mask = PSRAM_MASK; ram_mask = SRAM_MASK; ram_base = 0;
+    cursor = 0; rom_mask = PSRAM_MASK; ram_mask = 0x7FFFF; ram_base = 0;
     map = 7; features = 0; status = 0;
     phase = PH_CMD; srtc_ptr = 15; srtc_latch = 0;
+    hook_flags = 0; cheat_mask = 0;
+    snescmd_unlock = unlock_disable = force_entry = vec_armed = false;
+    vec_unlock = 0; locked_vec = 0xFFFFFF; return_vector = 0xEA; pad_data = 0; reset_unlock = 0;
+    holdoff = 0; snes_ajr = pad_latch = false; pad_cnt = 0; map_unlock_bits = 0; rBG = rM7 = 0;
+    nmi_usage = irq_usage = 0; auto_nmi = true; auto_irq = false;
   }
 
   // fpga_pgm: hardware reinicializa a BRAM SNESCMD na reconfig; PSRAM/SRAM externas ficam.
@@ -95,6 +109,10 @@ public:
   // -------- lado SNES --------
   uint8_t snes_read(uint32_t a)  override { return decode(a, 0, 0); }
   void    snes_write(uint32_t a, uint8_t d) override { decode(a, 1, d); }
+  void    cpu_vector_fetch(uint32_t vector, int native) override;
+  void    snoop(uint32_t a, uint8_t d, int write) override;
+  void    snes_reset_strobe() override;
+  void    snes_frame() override;
 
   // -------- introspecção --------
   uint8_t *psram_ptr() override { return psram.data(); }
@@ -165,11 +183,65 @@ public:
   uint8_t  mapper() override { return map; }
 
 private:
-  std::vector<uint8_t> psram, sram;
+  std::vector<uint8_t> psram;
   uint8_t  snescmd[SNESCMD_SIZE];
   uint32_t cursor, rom_mask, ram_mask;
   uint8_t  ram_base, map;
   uint16_t features, status;
+
+  // ---- in-game hook (cheat.v). The MCU sets the flags and ROM cheats over SPI; everything
+  // else is SNES-thread state (the read path takes no lock, see runner.cpp), hence the atomic.
+  std::atomic<uint8_t> hook_flags{0};
+  uint32_t cheat_addr[6] = {};
+  uint8_t  cheat_data[6] = {}, cheat_mask;
+  bool     snescmd_unlock, unlock_disable, force_entry;
+  bool     vec_armed;          // the CPU pushed its state and is about to fetch a hooked vector
+  uint8_t  vec_unlock;         // bytes of the hijacked vector still to serve (bit0 low, bit1 high)
+  uint32_t locked_vec;         // the vector the hook came in through; jmp ($FFxx) to it = exit
+  uint8_t  return_vector;      // its low byte, served at $2A6C for the stub's final jmp
+  uint16_t pad_data;           // the pad the stub stores at $2BF0/1
+  int      reset_unlock;       // reset vector fetches left to redirect to the reset hook $2A7D
+  int      holdoff;            // frames left with hooks off (after reset, or the $85 gesture)
+  bool     snes_ajr, pad_latch; int pad_cnt;   // main.v: $4200 bit0 / manual $4016 polling
+  uint8_t  map_unlock_bits;    // $2BB2: Fx_rd Fx_wr Ex_rd Ex_wr snescmd_rd snescmd_wr (bit5..0)
+  uint8_t  rBG, rM7;           // ctx.v: previous write of the double-write PPU registers
+  int      nmi_usage, irq_usage; bool auto_nmi, auto_irq;   // NMI/IRQ hook autoselect
+  uint8_t  d3_idx;             // FPGA_CMD_CHEAT_WRITE: index byte
+
+  bool cmd_unlocked() const { return map == 7 || (features & FEAT_CMD_UNLOCK); }
+  bool hook_enable() const { return holdoff == 0; }
+  uint8_t nmicmd() const {
+    switch (pad_data) {
+      case 0x3030: return 0x80; case 0x2070: return 0x81; case 0x10b0: return 0x82;
+      case 0x9030: return 0x83; case 0x5030: return 0x84; case 0x1070: return 0x85;
+    }
+    return 0;
+  }
+  // cheat.v's branch targets patched into the stub's `bra` operands while it runs
+  uint8_t branch1() const {
+    uint8_t f = hook_flags; bool wram = (f & HK_CHEAT) && (f & HK_WRAM), ss = f & HK_SAVESTATE;
+    if (f & HK_BUTTONS) {
+      if (snes_ajr) {
+        if (nmicmd()) return 0x30;                          // nmi_echocmd
+        if (wram) return 0x3a;                              // nmi_patches
+        return (ss && (force_entry || pad_data)) ? 0x3f : 0x43;   // nmi_savestate / nmi_exit
+      }
+      if (pad_latch) return wram ? 0x3a : 0x43;             // game mid manual poll: hands off
+      return 0x00;                                          // no AJR: the stub reads $4016
+    }
+    if (wram) return 0x3a;
+    return (ss && pad_data) ? 0x3f : 0x43;
+  }
+  uint8_t branch2() const {
+    uint8_t f = hook_flags;
+    if (nmicmd() == 0x81) return 0x14;                      // nmi_stop
+    if ((f & HK_CHEAT) && (f & HK_WRAM)) return 0x00;
+    return (f & HK_SAVESTATE) ? 0x05 : 0x09;
+  }
+  uint8_t branch3() const { return (hook_flags & HK_SAVESTATE) ? 0x00 : 0x04; }
+  // what cheat.v drives on a read, or -1 for "not this module"
+  int hook_read(uint32_t a);
+  void hook_write(uint32_t a, uint8_t d);
 
   // estado do interpretador SPI
   int      phase;
@@ -246,6 +318,8 @@ private:
         else if (tx == 0xf1) { dac_advance(); phase = PH_STATUS; status_idx = 2; }  // GETSTATUS
         else if (tx == 0xfb) { phase = PH_SFX; cnt = 6; acc = 0; }                  // SFX_PLAY base+len
         else if (tx == 0xfc) { sfx_pos = sfx_len; phase = PH_SKIP; }                // SFX_DISABLE: abort the fetcher
+        else if (tx == 0xed) { phase = PH_FEATURE; cnt = 2; acc = 0; }              // SETFEATURE (MSB first)
+        else if (tx == 0xd3) { phase = PH_CHEAT_IDX; }                              // CHEAT_WRITE idx + 32 bits
         else                 { phase = PH_SKIP; }
         return 0;
       }
@@ -291,6 +365,18 @@ private:
         acc = (acc << 8) | tx; if (--cnt == 0) { dac_wr = acc & 2047; phase = PH_SKIP; } return 0;
       case PH_DACPTR:
         acc = (acc << 8) | tx; if (--cnt == 0) { dac_advance(); dac_rd = acc & 2047; phase = PH_SKIP; } return 0;
+      case PH_FEATURE:
+        acc = (acc << 8) | tx; if (--cnt == 0) { features = acc & 0xffff; phase = PH_SKIP; } return 0;
+      case PH_CHEAT_IDX: d3_idx = tx & 7; phase = PH_CHEAT; cnt = 4; acc = 0; return 0;
+      case PH_CHEAT:
+        acc = (acc << 8) | tx;
+        if (--cnt == 0) {                    // cheat.v pgm_we: 0-5 ROM cheats, 6 their enable mask, 7 flags
+          if (d3_idx < 6) { cheat_addr[d3_idx] = acc >> 8; cheat_data[d3_idx] = acc & 0xff; }
+          else if (d3_idx == 6) cheat_mask = acc & 0x3f;
+          else hook_flags = (uint8_t)((hook_flags & ~((acc >> 8) & 0x7f)) | (acc & 0x7f));
+          phase = PH_SKIP;
+        }
+        return 0;
       case PH_TEST: return 0xa5;
       case PH_STATUS: { uint16_t st = (status & ~0x4000) | (dac_rd >= 1024 ? 0x4000 : 0);
                         uint8_t v = (status_idx == 2) ? (st >> 8) : (st & 0xff);
@@ -299,22 +385,25 @@ private:
     }
   }
 
-  // SNESCMD: janela $2A00-$2FFF em $00-$3F/$80-$BF (address.v:298), idx = addr&0x3FF.
-  bool snescmd_window(uint32_t a) const {
-    return ((a & 0x400000u) == 0) && ((a & 0xF800u) == 0x2800u) && ((a & 0x0600u) != 0);
+  // SNESCMD BRAM: $2A00-$2DFF in banks $00-$3F/$80-$BF (address.v snescmd_enable), idx = addr&0x3FF.
+  static bool snescmd_window(uint32_t a) {
+    return ((a & 0x400000u) == 0) && ((a & 0xF800u) == 0x2800u) && (((a >> 9) & 3) == 1 || ((a >> 9) & 3) == 2);
   }
-  bool snescmd_accessible() const { return (map == 7) || (features & FEAT_CMD_UNLOCK); }
 
-  // decode unificado: rw=0 read (retorna byte), rw=1 write (usa d).
-  // NOTA: regiões de SRAM do mapper "menu" (7) são uma 1ª aproximação; serão afinadas
-  // contra address.v na integração com o menu (M2.C).
+  // decode unificado: rw=0 read (retorna byte), rw=1 write (usa d). Espelha address.v + o mux de
+  // dados do main.v: cheat.v (hooks, ROM cheats) > SNESCMD > IS_PATCH (identity) > mapper.
   uint8_t decode(uint32_t a, int rw, uint8_t d) {
     a &= 0xFFFFFF;
-    if (snescmd_window(a) && snescmd_accessible()) {
-      uint16_t i = a & (SNESCMD_SIZE - 1);
-      if (rw && (i == 0x200 || i == 0x202)) trace_cmd("SNES", "write", i, d);   // $2A00/$2A02
-      if (rw) { snescmd[i] = d; return 0; }
-      return snescmd[i];
+    if (!rw) { int h = hook_read(a); if (h >= 0) return (uint8_t)h; }
+    else hook_write(a, d);
+    if (snescmd_window(a)) {
+      bool open = cmd_unlocked() || snescmd_unlock || (map_unlock_bits & (rw ? 1 : 2));
+      if (open) {
+        uint16_t i = a & (SNESCMD_SIZE - 1);
+        if (rw && (i == 0x200 || i == 0x202)) trace_cmd("SNES", "write", i, d);   // $2A00/$2A02
+        if (rw) { snescmd[i] = d; return 0; }
+        return snescmd[i];
+      }
     }
     uint8_t bank = (a >> 16) & 0xff;
     uint16_t off = a & 0xffff;
@@ -323,32 +412,169 @@ private:
       if (rw && (d & 0x0f) == 0x0d) srtc_ptr = 15;                   // $2801: modo leitura
       return 0;
     }
-    bool is_sram = false; uint32_t sram_off = 0, pa = 0;
-
-    if (map == 7) {
-      // Menu mapper: janela HiROM baseada em SRAM_MENU_ADDR (0xC00000). A base é
-      // somada APÓS o rom_mask (senão o mask 0x3FFFFF apagaria a base). Cobre ROM do
-      // menu ($C0:xxxx), CFG ($FF0100) e status ($FF1000) - tudo em PSRAM.
-      pa = MENU_BASE + ((a & 0x3FFFFF) & rom_mask);
-    } else if (map == 1) {                       // LoROM
-      if (((bank & 0x7f) >= 0x70) && (off < 0x8000)) { is_sram = true; sram_off = ((bank & 0x0f) << 15) | off; }
-      else pa = (((((uint32_t)(bank & 0x7f)) << 15) | (off & 0x7fff)) & rom_mask);
-    } else {                                     // HiROM(0)/ExHiROM(2): base 0 (SRAM_ROM_ADDR)
-      bool hi_sram = (((bank & 0x7f) >= 0x20) && ((bank & 0x7f) <= 0x3f) && (off >= 0x6000) && (off < 0x8000));
-      if (hi_sram) { is_sram = true; sram_off = (a & SRAM_MASK); }
-      else pa = (a & 0x3FFFFF) & rom_mask;
-    }
-
-    if (is_sram) {
-      uint32_t i = (sram_off + ((uint32_t)ram_base << 13)) & ram_mask & SRAM_MASK;
-      if (rw) { sram[i] = d; return 0; }
-      return sram[i];
+    // IS_PATCH: the linear PSRAM window -- $C0-$FF while the hook holds snescmd_unlock (the
+    // savestate handler and the in-game menu run from the menu's bank $C0), or $Ex/$Fx when
+    // $2BB2 opens them. Readable and writable (IS_WRITABLE).
+    uint8_t mu = map_unlock_bits;
+    bool patch = (snescmd_unlock && bank >= 0xC0)
+              || ((bank & 0xF0) == 0xF0 && (mu & (rw ? 0x10 : 0x20)))
+              || ((bank & 0xF0) == 0xE0 && (mu & (rw ? 0x04 : 0x08)));
+    uint32_t pa;
+    bool writable = patch;
+    if (patch) pa = a;
+    else if (map == 7) {
+      // Menu mapper: ROM = ({A[22:0]} & ROM_MASK) + $C00000; banks $F0-$FF are its "SRAM",
+      // identity-mapped (CFG $FF0100, status $FF1000...).
+      if ((bank & 0xF0) == 0xF0) { pa = a; writable = true; }
+      else pa = ((a & 0x7FFFFF) & rom_mask) + MENU_BASE;
+    } else {
+      // The game's save RAM lives in PSRAM at SAVERAM_ADDR = $E00000 | base<<11 (the firmware
+      // loads/saves the .srm there); a zero mask means no save RAM (SAVERAM_MASK[0] gate).
+      uint32_t sbase = SAVERAM_BASE | ((uint32_t)ram_base << 11);
+      bool has_sram = ram_mask & 1;
+      if (map == 1) {                            // LoROM: SRAM @ $70-$7D/$F0-$FF (A15 low when ROM >= 32 Mbit)
+        bool romsel = (bank & 0x7e) != 0x7e;     // $7E/$7F are WRAM
+        if (has_sram && (bank & 0x70) == 0x70 && romsel && (!(off & 0x8000) || !(rom_mask & 0x200000))) {
+          pa = sbase + ((((uint32_t)(bank & 0x1f) << 15) | (off & 0x7fff)) & ram_mask); writable = true;
+        } else
+          pa = ((((uint32_t)(~bank >> 7) & 1) << 22) | ((uint32_t)(bank & 0x7f) << 15) | (off & 0x7fff)) & rom_mask;
+      } else {                                   // HiROM(0) / ExHiROM(2): SRAM @ $20-$3F/$A0-$BF:6000-7FFF
+        if (has_sram && (bank & 0x60) == 0x20 && (off & 0xe000) == 0x6000) {
+          pa = sbase + ((((uint32_t)(bank & 0x1f) << 13) | (off & 0x1fff)) & ram_mask); writable = true;
+        } else if (map == 2)
+          pa = ((((uint32_t)(~bank >> 7) & 1) << 22) | (a & 0x3FFFFF)) & rom_mask;
+        else
+          pa = (a & 0x7FFFFF) & rom_mask;
+      }
     }
     pa &= PSRAM_MASK;
-    if (rw) { psram[pa] = d; return 0; }
+    // ROM_WE only on IS_WRITABLE (main.v:1334, address.v:220): save RAM, the menu's $F0-$FF
+    // and the patch window. A game writing to its ROM space must not reach PSRAM.
+    if (rw) { if (writable) psram[pa] = d; return 0; }
     return psram[pa];
   }
 };
+
+// ---------------------------------------------------------------- cheat.v, SNES side
+// The CPU pushed PB/PC/P (native mode: 4 pushes) and will fetch `vector` next. cheat.v arms
+// the hijack from the push pattern; bsnes tells us directly. Any other read disarms it.
+void Behavioral::cpu_vector_fetch(uint32_t vector, int native) {
+  if (vector == 0xffea) nmi_usage++;
+  else if (vector == 0xffee) irq_usage++;
+  uint8_t f = hook_flags;
+  vec_armed = native && hook_enable()
+           && ((vector == 0xffea && auto_nmi && (f & HK_NMI)) || (vector == 0xffee && auto_irq && (f & HK_IRQ)));
+}
+
+int Behavioral::hook_read(uint32_t a) {
+  bool drive = !cmd_unlocked();          // main.v: cheat_hit & ~feat_cmd_unlock
+  // Hook exit: after the stub wrote $2BFD, the CPU re-reading the vector it came in through
+  // (its final jmp ($FFxx)) unmaps SNESCMD and the $C0-$FF window; that read gets the ROM.
+  if (unlock_disable && (a >> 1) == (locked_vec >> 1)) {
+    snescmd_unlock = unlock_disable = force_entry = false;
+    return -1;
+  }
+  // Reset hook: the first reset vector fetch after /RESET goes to $2A7D (nmihook.a65 resethook)
+  if (reset_unlock && (a == 0x00fffc || a == 0x00fffd)) {
+    if (a == 0x00fffc) { snescmd_unlock = true; locked_vec = 0x00fffc; }
+    reset_unlock--;
+    if (drive) return a == 0x00fffc ? 0x7d : 0x2a;
+    return -1;
+  }
+  // GAME -> INGAME HOOK: the armed first vector byte unlocks SNESCMD and serves $2A10
+  if (vec_armed && (a == 0x00ffea || a == 0x00ffee)) {
+    vec_armed = false;
+    vec_unlock = 3; locked_vec = a; return_vector = a & 0xff; snescmd_unlock = true;
+  }
+  vec_armed = false;
+  if (vec_unlock && (a >> 1) == (locked_vec >> 1)) {
+    vec_unlock &= ~(1 << (a & 1));
+    if (drive) return (a & 1) ? 0x2a : 0x10;
+    return -1;
+  }
+  // the stub's patched operands (address.v: exact bank-$00 addresses)
+  if (snescmd_unlock && hook_enable()) {
+    int v = -1;
+    switch (a) {
+      case 0x002A1F: v = branch1();
+                     if ((hook_flags & HK_SAVESTATE) && pad_data) force_entry = true;   // sticky entry
+                     break;
+      case 0x002A59: v = branch2(); break;
+      case 0x002A5E: v = branch3(); break;
+      case 0x002A6C: v = return_vector; break;
+      case 0x002BF2: v = nmicmd(); break;
+    }
+    if (v >= 0 && drive) return v;
+  }
+  // ROM cheats (never while the hook runs: the $C0 overlay would get patched)
+  if (cheat_mask && (hook_flags & HK_CHEAT) && !snescmd_unlock && drive)
+    for (int i = 0; i < 6; i++)
+      if ((cheat_mask >> i & 1) && cheat_addr[i] == a) return cheat_data[i];
+  return -1;
+}
+
+void Behavioral::hook_write(uint32_t a, uint8_t d) {
+  if (!snescmd_window(a)) return;
+  uint16_t i = a & 0x3FF;                     // BRAM index: $2A00 -> $200, $2BFD -> $3FD
+  if (i == 0x3f0) pad_data = (pad_data & 0xff00) | d;          // $2BF0/1: any write latches the pad
+  else if (i == 0x3f1) pad_data = (pad_data & 0x00ff) | d << 8;
+  if ((a & 0xFFFF) == 0x2BB2 && (snescmd_unlock || cmd_unlocked() || (map_unlock_bits & 1)))
+    map_unlock_bits = d & 0x3f;
+  if (!snescmd_unlock) return;
+  if (i == 0x200) {                           // MCU_CMD written from inside the hook
+    switch (d) {
+      case 0x82: hook_flags |= HK_CHEAT; break;
+      case 0x83: hook_flags &= (uint8_t)~HK_CHEAT; break;
+      case 0x84: hook_flags &= (uint8_t)~(HK_NMI | HK_IRQ); break;
+      case 0x85: holdoff = HOLDOFF_FRAMES; break;
+    }
+  } else if (i == 0x3fd) unlock_disable = true;   // NMI_VECT_DISABLE: arm the exit
+}
+
+// ---------------------------------------------------------------- the rest of the cart edge
+void Behavioral::snoop(uint32_t a, uint8_t d, int write) {
+  a &= 0xFFFFFF;
+  if (a & 0x400000) return;                   // system area only ($00-$3F/$80-$BF)
+  uint16_t off = a & 0xFFFF;
+  if (!write) {                               // $4016 read: 16 reads end a manual poll
+    if ((pad_cnt & 15) == 15) pad_latch = false;
+    pad_cnt++;
+    return;
+  }
+  if ((off & 0xFF00) == 0x2100) {             // ctx.v PPU register shadow, word per PA
+    uint8_t pa = off & 0xff;
+    bool bg = pa >= 0x0d && pa <= 0x14, m7 = (pa >= 0x0d && pa <= 0x0e) || (pa >= 0x1b && pa <= 0x20);
+    bool keep = (pa <= 0x33 && pa != 0x04 && pa != 0x18 && pa != 0x19 && pa != 0x22) || (pa >= 0x81 && pa <= 0x83);
+    if (keep) {
+      psram[CTX_PPUREG + 2 * pa] = bg ? rBG : m7 ? rM7 : d;   // earlier byte of a double write
+      psram[CTX_PPUREG + 2 * pa + 1] = d;
+    }
+    if (bg) rBG = d;
+    if (m7) rM7 = d;
+    return;
+  }
+  if (off == 0x4016) { pad_latch = true; pad_cnt = 0; }
+  if (off == 0x4200) snes_ajr = d & 1;
+  if ((off >= 0x4200 && off <= 0x420d) || ((off & 0xff80) == 0x4300 && (off & 0xf) <= 0xa))
+    psram[CTX_CPUREG + (off & 0x1ff)] = d;
+  if ((a & 0xFFFFFE) == 0x002BF0) psram[CTX_MISC + (a & 1)] = d;
+}
+
+void Behavioral::snes_reset_strobe() {
+  snescmd_unlock = unlock_disable = vec_armed = false;
+  vec_unlock = 0; locked_vec = 0xFFFFFF; reset_unlock = 2;
+  if (hook_flags & HK_HOLDOFF) holdoff = HOLDOFF_FRAMES;
+}
+
+// ~one cheat.v usage window (2^21 clocks = 21.8 ms): pick the NMI hook if the game takes NMIs
+// (or nothing at all), the IRQ hook for an IRQ-only frame loop. Not clocked inside the hook.
+void Behavioral::snes_frame() {
+  if (holdoff) holdoff--;
+  if (snescmd_unlock) return;
+  if (nmi_usage || !irq_usage) { auto_nmi = true; auto_irq = false; }
+  else { auto_nmi = false; auto_irq = true; }
+  nmi_usage = irq_usage = 0;
+}
 
 } // namespace
 

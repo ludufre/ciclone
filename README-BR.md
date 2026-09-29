@@ -198,6 +198,19 @@ desconhecido). Teste de regressão só vale se falha sem o fix: `REF=<commit de 
 precisa dos mapas de símbolos do menu testado, por isso builda o menu ela mesma (`tools/build_menu.sh`) em
 vez de usar um `m3nu.bin` de release.
 
+**Jogos reais** (`tests/menu/test_games.py`): Super Mario World (LoROM) e Donkey Kong Country 3 (HiROM,
+4 MB) são carregados pelo menu e jogados nos mappers do modelo de FPGA, com asserções pelo estado do
+próprio jogo na WRAM (modo de jogo, Mario andando; DKC3 até o mapa) - e o **menu in-game** sobre o SMW:
+o combo (L+R+Y+←) abre, R troca de aba, B fecha e o Mario volta a andar. Esse caminho é todo código real
+(o stub de NMI da firmware em `$2A10`, o handler de savestate, o `igmenu.bin`); o que o faz funcionar é o
+modelo de FPGA reproduzir o `cheat.v`: o sequestro do vetor de interrupção, o unlock do SNESCMD com a
+janela linear `$C0-$FF`, os operandos de branch patcheados, a liberação no `jmp ($FFxx)` final do hook, o
+hook de reset (`$2A7D`), o holdoff de 10 s, mais os shadows de registradores do `ctx.v` que o menu
+restaura ao fechar. O chip do bsnes entrega a ele o que a borda do cartucho vê fora das próprias faixas
+(busca de vetor, escritas no barramento, leituras de `$4016`, /RESET). ROM nunca entra no repositório:
+aponte `CICLONE_ROMS=<pasta>` para os seus dumps (busca recursiva, casados pelo CRC32 do No-Intro); sem
+ela, ou sem o dump certo, esses testes aparecem como pulados, não como falha.
+
 **Fidelidade de tempo (importa para não ter teste instável):** a firmware roda em tempo real numa thread
 e o SNES emulado roda bem mais rápido. Dois mecanismos do runner, ambos só com a firmware real:
 - **Sincronia de comando** (`CICLONE_SYNC=0` desliga): enquanto o MCU processa um comando, o acesso do SNES
@@ -338,9 +351,10 @@ Porque:
   (SSP / SD-nativo / USB / timers são modelados ou stub).
 - O **Caso 2** testa o **binário real**, mas com os periféricos **modelados**, não o silício.
 
-Na prática, a maioria das voltas fica no `run/dev.sh` / `run/test_menu.sh`; o hardware é pra fechar. Não
-cobre nada que precise de jogo rodando (menu in-game, savestates, outros cores), timing de hardware nem
-áudio.
+Na prática, a maioria das voltas fica no `run/dev.sh` / `run/test_menu.sh`; o hardware é pra fechar. Jogo
+LoROM/HiROM comum e o menu in-game rodam (ver *Jogos reais* acima), mas não cobre: savestates (o modelo
+não espelha as escritas de WRAM/VRAM/APU como o `ctx.v`, só os registradores), cores de coprocessador,
+timing de hardware nem áudio.
 
 ---
 
@@ -359,7 +373,10 @@ menu e o shell in-game que a firmware carrega: o MAIS RECENTE entre o `bin/` da 
 | `Empty Folder/` | pasta vazia |
 
 Usa `hdiutil` nativo do macOS - sem mtools. Os `._*` (AppleDouble) que o macOS grava em FAT e o
-`.fseventsd` são apagados antes de desmontar (o browser do menu os listaria).
+`.fseventsd` são apagados antes de desmontar (o browser do menu os listaria). O `config.yml` recebe
+`ResetPatch: false` quando a config dada não cita a chave: com o reset patch ligado, o hook de reset cronometra
+um H-IRQ contra o `$4212` para pegar fase de clock CPU/PPU desalinhada e reseta até passar - aleatório no
+console, falha garantida no timing fixo do bsnes, então todo jogo resetaria para sempre.
 
 ```sh
 bash tools/make_sdimg.sh                       # gera build/sdcard.img

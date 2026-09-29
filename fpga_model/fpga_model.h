@@ -14,6 +14,14 @@ public:
   virtual uint8_t snes_read(uint32_t addr) = 0;     // addr de 24 bits do barramento
   virtual void    snes_write(uint32_t addr, uint8_t data) = 0;
   virtual void    tick(int clocks) { (void)clocks; }
+  // What the cart edge sees outside its own ranges (the bsnes chip's snoop hooks):
+  // the CPU about to fetch an interrupt vector (native = after 4 stack pushes, the
+  // pattern cheat.v detects), every bus write and the $4016 reads, the /RESET strobe,
+  // and one call per SNES frame (the model's clock for multi-second timers).
+  virtual void    cpu_vector_fetch(uint32_t vector, int native) { (void)vector; (void)native; }
+  virtual void    snoop(uint32_t addr, uint8_t data, int write) { (void)addr; (void)data; (void)write; }
+  virtual void    snes_reset_strobe() {}
+  virtual void    snes_frame() {}
 
   // ---- lado MCU (chamado pelo seam SPI) ----
   virtual void    spi_select() = 0;

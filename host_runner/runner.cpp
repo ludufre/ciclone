@@ -132,7 +132,10 @@ static void cart_frame(void) {
 }
 static void snes_frame(void) {
   if (ciclone_snes_reset_edge) { ciclone_snes_reset_edge = 0; snes_reset(); }
-  if (!ciclone_snes_in_reset) snes_run();
+  if (!ciclone_snes_in_reset) {
+    snes_run();
+    if (ciclone::FpgaModel *m = ciclone::active_model()) m->snes_frame();
+  }
   cart_frame();
 }
 static void paced_run(void) { snes_frame(); pace((double)g_frame + 1); }
@@ -158,6 +161,17 @@ extern "C" {
     ciclone::FpgaModel *m = ciclone::active_model();
     if (m) m->snes_write(addr, data);
     ciclone_model_unlock();
+  }
+  // The rest of the cart edge (bsnes chip snoop hooks). All on the SNES thread and, like the
+  // reads, without the model mutex: they touch only SNES-side model state and PSRAM shadows.
+  void ciclone_chip_irq_vector(uint32_t vector, int native) {
+    if (ciclone::FpgaModel *m = ciclone::active_model()) m->cpu_vector_fetch(vector, native);
+  }
+  void ciclone_chip_bus_snoop(uint32_t addr, uint8_t data, int write) {
+    if (ciclone::FpgaModel *m = ciclone::active_model()) m->snoop(addr, data, write);
+  }
+  void ciclone_chip_reset(void) {
+    if (ciclone::FpgaModel *m = ciclone::active_model()) m->snes_reset_strobe();
   }
   // CDC (transporte FxPakPro): stub no host_runner - USB desligado no M2. O servidor
   // FxPakPro REAL (usbinterface.c) está na libsd2snesfw, mas só é exercitado no M2.5

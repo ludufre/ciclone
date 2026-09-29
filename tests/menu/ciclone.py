@@ -43,6 +43,36 @@ class MenuError(AssertionError):
     pass
 
 
+class Skip(Exception):
+    """A test that cannot run here (e.g. a game ROM that is not on this machine): not a failure."""
+
+
+# ---------------------------------------------------------------- real game ROMs
+# Commercial ROMs never go into the repo. Tests that need one look it up by CRC32 (No-Intro,
+# without a copier header) under $CICLONE_ROMS (searched recursively) and skip when it is absent.
+ROM_EXTS = (".sfc", ".smc")
+_rom_crcs: dict[tuple[str, int, float], int] = {}
+
+
+def game_rom(crc: int, what: str) -> bytes:
+    import zlib
+    top = os.environ.get("CICLONE_ROMS")
+    if not top:
+        raise Skip(f"{what}: set CICLONE_ROMS to a folder with SNES ROMs")
+    for f in sorted(Path(top).expanduser().rglob("*")):
+        if f.suffix.lower() not in ROM_EXTS or not f.is_file():
+            continue
+        st = f.stat()
+        key = (str(f), st.st_size, st.st_mtime)
+        if key not in _rom_crcs:
+            data = f.read_bytes()
+            _rom_crcs[key] = zlib.crc32(data[512:] if len(data) % 1024 == 512 else data)
+        if _rom_crcs[key] == crc:
+            data = f.read_bytes()
+            return data[512:] if len(data) % 1024 == 512 else data
+    raise Skip(f"{what} (CRC32 {crc:08x}) not found under {top}")
+
+
 # ---------------------------------------------------------------- símbolos / fonte
 class Symbols:
     """name -> endereço, de todos os .map do pacote do menu (data.map = variáveis WRAM)."""

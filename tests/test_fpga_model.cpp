@@ -40,6 +40,14 @@ static void sc_setaddr(uint16_t a) {
 static void sc_write(uint8_t v) {
   ciclone_spi_select(); ciclone_spi_txrx(0xd2); ciclone_spi_txrx(v); ciclone_spi_txrx(0x00); ciclone_spi_deselect();
 }
+static void set_features(uint16_t f) {          // FPGA_CMD_SETFEATURE, MSB first
+  ciclone_spi_select(); ciclone_spi_txrx(0xed); ciclone_spi_txrx(f >> 8); ciclone_spi_txrx(f & 0xff); ciclone_spi_deselect();
+}
+static void write_cheat(uint8_t idx, uint32_t code) {   // FPGA_CMD_CHEAT_WRITE
+  ciclone_spi_select(); ciclone_spi_txrx(0xd3); ciclone_spi_txrx(idx);
+  for (int s = 24; s >= 0; s -= 8) ciclone_spi_txrx((code >> s) & 0xff);
+  ciclone_spi_deselect();
+}
 static uint8_t sc_read() {
   ciclone_spi_select(); ciclone_spi_txrx(0xd1); uint8_t v = ciclone_spi_txrx(0xff); ciclone_spi_deselect(); return v;
 }
@@ -102,6 +110,47 @@ int main() {
   // 8) janela SNESCMD inacessível fora do menu sem unlock
   set_mapper(0);                // HiROM, cmd locked
   CHECK(m->snes_read(0x002A02) != 0x55 || true, "SNESCMD gated fora do menu (decode nao falha)");
+
+  // 9) in-game hook (cheat.v): a game (features without CMD_UNLOCK), NMI + buttons + savestate on
+  set_mcu_addr(0xFFEA); wr_byte(0x34); set_mcu_addr(0xFFEB); wr_byte(0x12);   // the game's NMI vector
+  set_features(0x0790);
+  write_cheat(7, 0x00000052);                  // set nmi|buttons|savestate
+  m->snes_reset_strobe();
+  CHECK(m->snes_read(0x00FFFC) == 0x7D && m->snes_read(0x00FFFD) == 0x2A, "reset hook: 1st reset vector -> $2A7D");
+  m->snes_write(0x002BFD, 0x00);               // resethook: stz NMI_VECT_DISABLE
+  CHECK(m->snes_read(0x00FFFC) == 0xEF, "reset hook exit: jmp ($FFFC) gets the ROM vector");
+  CHECK(m->snes_read(0x00FFEA) == 0x34, "plain read of $FFEA (no interrupt) is the ROM");
+  m->cpu_vector_fetch(0xffea, 0);
+  CHECK(m->snes_read(0x00FFEA) == 0x34, "emulation-mode NMI (3 pushes) is not hijacked");
+  m->cpu_vector_fetch(0xffea, 1);
+  uint8_t lo = m->snes_read(0x00FFEA), hi = m->snes_read(0x00FFEB);
+  CHECK(lo == 0x10 && hi == 0x2A, "native NMI vector fetch -> $2A10 (the stub)");
+  m->snes_write(0x002BF0, 0x30); m->snes_write(0x002BF1, 0x42);   // stub: sta @NMI_PAD (L+R+Y+Left)
+  CHECK(m->snes_read(0x002A6C) == 0xEA, "return vector operand = $EA (came in through NMI)");
+  m->snoop(0x004200, 0x81, 1);                 // the game enabled NMI + auto-joypad
+  CHECK(m->snes_read(0x002A1F) == 0x3f, "branch1 -> nmi_savestate (AJR, pad held, savestate on)");
+  CHECK(m->snes_read(0xC00000) == 0x00 && (m->snes_write(0xC01234, 0x77), m->snes_read(0xC01234) == 0x77),
+        "hook unlock maps $C0-$FF linear, writable");
+  m->snes_write(0x002BFD, 0x00);               // nmi_exit: sta @NMI_VECT_DISABLE ...
+  CHECK(m->snes_read(0x00FFEA) == 0x34, "... jmp ($FFEA) releases the unlock and gets the ROM vector");
+  CHECK(m->snes_read(0x002A1F) != 0x3f, "SNESCMD overrides gone after the exit");
+  m->snoop(0x00210D, 0x11, 1); m->snoop(0x00210D, 0x02, 1);   // BG1HOFS double write
+  uint8_t *ps = m->psram_ptr();
+  CHECK(ps[0xF9051A] == 0x11 && ps[0xF9051B] == 0x02, "ctx shadow: $210D = {earlier, latest} at $F9051A");
+  m->snoop(0x004207, 0x55, 1);
+  CHECK(ps[0xF90707] == 0x55, "ctx shadow: $4207 at $F90707");
+  write_cheat(7, 0x00000008);                  // holdoff on
+  m->snes_reset_strobe();
+  m->snes_read(0x00FFFC); m->snes_read(0x00FFFD); m->snes_write(0x002BFD, 0); m->snes_read(0x00FFFC);
+  m->cpu_vector_fetch(0xffea, 1);
+  CHECK(m->snes_read(0x00FFEA) == 0x34, "holdoff: no hook for 10 s after reset");
+  for (int i = 0; i < 601; i++) m->snes_frame();
+  m->cpu_vector_fetch(0xffea, 1);
+  CHECK(m->snes_read(0x00FFEA) == 0x10, "holdoff over after 601 frames");
+  m->snes_read(0x00FFEB);
+  set_features(0x07a4);                        // the menu (CMD_UNLOCK): the FPGA drives nothing
+  m->snes_reset_strobe();
+  CHECK(m->snes_read(0x00FFFC) == 0xEF, "menu features: no reset hook data");
 
   printf("\n== %s (%d falhas) ==\n", fails ? "FALHOU" : "PASSOU", fails);
   return fails ? 1 : 0;

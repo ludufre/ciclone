@@ -127,6 +127,8 @@ def run_one(name, fn, verbose):
     failed, err = False, ""
     try:
         fn(t)
+    except c.Skip as e:
+        err = f"skip: {e}"
     except Exception as e:  # noqa: BLE001
         failed = True
         err = "".join(traceback.format_exception_only(type(e), e)).strip()
@@ -158,11 +160,14 @@ def main():
         for fut in cf.as_completed(futs):
             name, failed, err, dt = fut.result()
             results.append((name, failed, err))
-            print(f"  {'FALHOU' if failed else 'ok    '} {name} ({dt:.1f}s)", flush=True)
-            if failed:
+            skip = err.startswith("skip: ")
+            print(f"  {'FALHOU' if failed else 'pulado' if skip else 'ok    '} {name} ({dt:.1f}s)", flush=True)
+            if failed or skip:
                 print("         " + err.replace("\n", "\n         "))
     nfail = sum(1 for _, f, _ in results if f)
-    print(f"\n{len(results) - nfail}/{len(results)} passaram em {time.time() - t0:.0f}s"
+    nskip = sum(1 for _, f, e in results if not f and e.startswith("skip: "))
+    print(f"\n{len(results) - nfail - nskip}/{len(results)} passaram"
+          + (f" ({nskip} pulados)" if nskip else "") + f" em {time.time() - t0:.0f}s"
           + (f" -- artefatos em {OUT}/<teste>/" if nfail else ""))
     sys.exit(1 if nfail else 0)
 
