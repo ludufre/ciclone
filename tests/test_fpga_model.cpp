@@ -5,6 +5,7 @@
 #include "ciclone_seam.h"
 #include <cstdio>
 #include <cstdint>
+#include <initializer_list>
 
 using namespace ciclone;
 
@@ -151,6 +152,64 @@ int main() {
   set_features(0x07a4);                        // the menu (CMD_UNLOCK): the FPGA drives nothing
   m->snes_reset_strobe();
   CHECK(m->snes_read(0x00FFFC) == 0xEF, "menu features: no reset hook data");
+
+  // 10) the rest of cheat.v and the copier, back on a game's features
+  set_features(0x0790);
+  write_cheat(7, 0x00003843);                  // clear holdoff/buttons/wram; set cheat, nmi, savestate
+  m->snes_reset_strobe(); m->snes_read(0x00FFFC); m->snes_read(0x00FFFD); m->snes_write(0x002BFD, 0); m->snes_read(0x00FFFC);
+  for (int i = 0; i < 601; i++) m->snes_frame();   // the holdoff the last reset armed runs out
+  set_mcu_addr(0x8123); wr_byte(0xAA);
+  write_cheat(0, 0x008123BBu); write_cheat(6, 0x01);   // ROM cheat 0: $00:8123 = $BB, enabled
+  CHECK(m->snes_read(0x008123) == 0xBB, "ROM cheat: FPGA serves the patched byte");
+  write_cheat(7, 0x00000100);                  // cheat_enable off
+  CHECK(m->snes_read(0x008123) == 0xAA, "ROM cheat off: the ROM byte");
+  // copier from the MCU ($D4): F5:0000..3 -> F0:0010..
+  set_mcu_addr(0xF50000); for (uint8_t b : {1, 2, 3, 4}) wr_byte(b);
+  { ciclone_spi_select(); ciclone_spi_txrx(0xd4);
+    for (uint8_t b : {0xF0, 0xF5, 0x00, 0x00, 0x10, 0x00, 0x04, 0x00, 0x00, 0x01}) ciclone_spi_txrx(b);
+    ciclone_spi_deselect(); }
+  CHECK(ps[0xF00010] == 1 && ps[0xF00013] == 4, "copier via MCU $D4: 4 bytes copied");
+  // copier from the SNES, inside the hook: fill F0:0020..27 with $FF (OP_SET)
+  m->cpu_vector_fetch(0xffea, 1); m->snes_read(0x00FFEA); m->snes_read(0x00FFEB);
+  CHECK(m->snes_read(0x002020) == 'S' && m->snes_read(0x002025) == '1', "copier regs read 'S-DMA1' while unlocked");
+  uint8_t op[10] = {0xF0, 0x00, 0x00, 0x00, 0x20, 0x00, 0x08, 0x00, 0x00, (2 << 3) | 1};
+  for (int i = 0; i < 10; i++) m->snes_write(0x002020 + i, op[i]);
+  CHECK(ps[0xF00020] == 0xFF && ps[0xF00027] == 0xFF && ps[0xF00028] == 0x00, "copier via SNES $2029: OP_SET 8 bytes");
+  CHECK((m->snes_read(0x002029) & 1) == 0, "copier trigger reads back clear (done)");
+  m->snes_write(0x002BFD, 0); m->snes_read(0x00FFEA);
+  // USB exe hook: a payload at $2C00 takes the next NMI
+  sc_setaddr(0x000); sc_write(0x4C);           // MCU writes $2C00 (nonzero = present)
+  m->cpu_vector_fetch(0xffea, 1);
+  lo = m->snes_read(0x00FFEA); hi = m->snes_read(0x00FFEB);
+  CHECK(lo == 0x00 && hi == 0x2C, "exe present: NMI -> $2C00");
+  CHECK(m->snes_read(0x002C00) == 0x4C, "exe unlock: the payload at $2C00 is readable");
+  m->snes_write(0xF12345, 0x5A);
+  CHECK(ps[0xF12345] == 0x5A, "exe: map_unlock opens $F0-$FF linear");
+  lo = m->snes_read(0x00FFEA); hi = m->snes_read(0x00FFEB);   // the payload's jmp ($FFEA)
+  CHECK(lo == 0x10 && hi == 0x2A, "exe exit with the NMI hook on -> the in-game hook $2A10");
+  m->snes_write(0x002BFD, 0);
+  CHECK(m->snes_read(0x00FFEA) == 0x34, "... and out of it to the game as usual");
+  write_cheat(7, 0x00000200);                  // NMI hook off: exe exits straight to the game
+  m->cpu_vector_fetch(0xffea, 1); m->snes_read(0x00FFEA); m->snes_read(0x00FFEB);
+  CHECK(m->snes_read(0x00FFEA) == 0x34, "exe exit with the NMI hook off -> the game's vector");
+  sc_setaddr(0x000); sc_write(0x00);
+  m->cpu_vector_fetch(0xffea, 1);
+  CHECK(m->snes_read(0x00FFEA) == 0x34, "no payload, NMI hook off: no hijack");
+
+  // 11) IRQ-only frame loop: the autoselect moves the hook to the IRQ vector
+  set_mcu_addr(0xFFEE); wr_byte(0x78); set_mcu_addr(0xFFEF); wr_byte(0x56);
+  write_cheat(7, 0x00000006);                  // nmi + irq hooks on
+  m->snes_frame();                             // close the window the NMIs above were counted in
+  m->cpu_vector_fetch(0xffee, 1);
+  CHECK(m->snes_read(0x00FFEE) == 0x78, "IRQ while the NMI hook is selected: not hijacked");
+  m->snes_read(0x00FFEF);
+  m->snes_frame();                             // a window with IRQs and no NMI -> IRQ hook
+  m->cpu_vector_fetch(0xffee, 1);
+  lo = m->snes_read(0x00FFEE); hi = m->snes_read(0x00FFEF);
+  CHECK(lo == 0x10 && hi == 0x2A, "IRQ-only game: IRQ vector -> $2A10");
+  CHECK(m->snes_read(0x002A6C) == 0xEE, "return vector operand = $EE (came in through IRQ)");
+  m->snes_write(0x002BFD, 0);
+  CHECK(m->snes_read(0x00FFEE) == 0x78, "exit via jmp ($FFEE)");
 
   printf("\n== %s (%d falhas) ==\n", fails ? "FALHOU" : "PASSOU", fails);
   return fails ? 1 : 0;

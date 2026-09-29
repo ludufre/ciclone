@@ -271,6 +271,12 @@ class Menu:
     def release(self):
         self.hold()
 
+    def menu_combo(self) -> tuple[str, ...]:
+        """The in-game menu combo the firmware armed for the loaded game -- what the window's
+        M key presses (runner.cpp menu_combo_mask)."""
+        mask = int(self._cmd("menumask"), 16)
+        return tuple(b for b, i in BUTTONS.items() if mask >> i & 1)
+
     def press(self, *btns: str, hold: int = 3, after: int = 3):
         """Aperta e solta (o menu lê o pad no NMI; 3 quadros cobrem a borda de subida)."""
         self.hold(*btns)

@@ -124,7 +124,12 @@ build/host_runner_gui --gui build/sdcard.img
 | Setas | D-pad | | Enter | Start |
 | `Z` / `X` | B / A | | Shift | Select |
 | `A` / `S` | Y / X | | `Q` / `W` | L / R |
-| | | | `ESC` | sair |
+| `M` | menu in-game | | `ESC` | sair |
+
+`M` aperta o combo do menu in-game por você (o que a firmware armou para o jogo carregado - padrão
+L+R+Y+←, ou o seu `IngameButtonsMenu`): quatro teclas juntas costumam não registrar num teclado. Ele segura
+o combo por 20 quadros e solta; o jogo também vê esses botões, como veria num controle. Os hooks ficam
+desligados nos 10 s depois que o jogo começa, como no cartucho.
 
 > Não é o aplicativo Qt completo do bsnes-plus (com menus/debugger da UI dele) - é o **motor de
 > emulação** dele numa janela, com o firmware real. É o caminho que reusa 100% a fiação testada do `--fw`.
@@ -155,7 +160,8 @@ bash run/keys.sh "120:DOWN,160:Y" "150:antes,260:depois"
 build/host_runner_fw --fw --keys "120:DOWN,160:Y,280:B" --shots "260:a.ppm,400:b.ppm" build/sdcard.img last.ppm 401
 ```
 
-Botões: `B Y SEL START UP DOWN LEFT RIGHT A X L R` (combine com `+`; `HOLD` em quadros, default 4). O log da
+Botões: `B Y SEL START UP DOWN LEFT RIGHT A X L R`, e `MENU` para o combo armado do menu in-game (combine
+com `+`; `HOLD` em quadros, default 4 - 20 para o `MENU`). O log da
 firmware (printf) sai no stdout do runner. A firmware roda em tempo real numa thread e o SNES espera por ela
 nos handshakes, então os quadros de um roteiro são estáveis entre runs.
 
@@ -207,7 +213,14 @@ modelo de FPGA reproduzir o `cheat.v`: o sequestro do vetor de interrupção, o 
 janela linear `$C0-$FF`, os operandos de branch patcheados, a liberação no `jmp ($FFxx)` final do hook, o
 hook de reset (`$2A7D`), o holdoff de 10 s, mais os shadows de registradores do `ctx.v` que o menu
 restaura ao fechar. O chip do bsnes entrega a ele o que a borda do cartucho vê fora das próprias faixas
-(busca de vetor, escritas no barramento, leituras de `$4016`, /RESET). ROM nunca entra no repositório:
+(busca de vetor, escritas no barramento, leituras de `$4016`, /RESET). A mesma maquinaria roda o resto
+das funções in-game, cada uma com teste: **savestates** (Start+R salva - o handler congela o jogo no hook,
+o copiador do FPGA (`dma.v`, `$2020-$2029` ou o `$D4` do MCU) prepara o espelho da WRAM, VRAM/CGRAM/OAM
+são relidas do console e o MCU grava a imagem de 320 KB no cartão; Start+L a reaplica), os **gestos** que
+o stub ecoa para o MCU (L+R+Start+Select reseta o jogo, L+R+Select+X volta ao menu, L+R+Start+A/B cheats
+liga/desliga, L+R+Start+Y / +X hooks desligados / por 10 s), **cheats de WRAM** (código que o stub roda a
+cada NMI) e **cheats de ROM** (servidos pelo FPGA na leitura). O hook de IRQ (loops de quadro só por IRQ)
+e o hook exe do USB (`$2C00`) só têm cobertura no `tests/test_fpga_model.cpp`. ROM nunca entra no repositório:
 aponte `CICLONE_ROMS=<pasta>` para os seus dumps (busca recursiva, casados pelo CRC32 do No-Intro); sem
 ela, ou sem o dump certo, esses testes aparecem como pulados, não como falha.
 
@@ -352,9 +365,10 @@ Porque:
 - O **Caso 2** testa o **binário real**, mas com os periféricos **modelados**, não o silício.
 
 Na prática, a maioria das voltas fica no `run/dev.sh` / `run/test_menu.sh`; o hardware é pra fechar. Jogo
-LoROM/HiROM comum e o menu in-game rodam (ver *Jogos reais* acima), mas não cobre: savestates (o modelo
-não espelha as escritas de WRAM/VRAM/APU como o `ctx.v`, só os registradores), cores de coprocessador,
-timing de hardware nem áudio.
+LoROM/HiROM comum, o menu in-game, savestates, gestos e cheats rodam (ver *Jogos reais* acima), mas não
+cobre: cores de coprocessador (e as janelas de savestate deles), os espelhos de WRAM/VRAM/APU do `ctx.v`
+(o savestate sobrescreve o que tira deles com leitura direta do console, então só falta a imagem da APU
+no arquivo), timing de hardware nem áudio.
 
 ---
 

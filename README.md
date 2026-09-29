@@ -125,7 +125,12 @@ build/host_runner_gui --gui build/sdcard.img
 | Arrows | D-pad | | Enter | Start |
 | `Z` / `X` | B / A | | Shift | Select |
 | `A` / `S` | Y / X | | `Q` / `W` | L / R |
-| | | | `ESC` | quit |
+| `M` | in-game menu | | `ESC` | quit |
+
+`M` presses the in-game menu combo for you (the one the firmware armed for the loaded game - default
+L+R+Y+Left, or your `IngameButtonsMenu`): four keys at once often do not register on a keyboard. It holds
+the combo for 20 frames and releases it; the game sees those buttons too, as it would on a pad. Hooks are
+held off for 10 s after a game starts, as on the cart.
 
 > This is not the full bsnes-plus Qt app (with its UI menus/debugger) - it's its **emulation engine** in a
 > window, with the real firmware. It reuses 100% of the tested `--fw` wiring.
@@ -156,7 +161,8 @@ bash run/keys.sh "120:DOWN,160:Y" "150:before,260:after"
 build/host_runner_fw --fw --keys "120:DOWN,160:Y,280:B" --shots "260:a.ppm,400:b.ppm" build/sdcard.img last.ppm 401
 ```
 
-Buttons: `B Y SEL START UP DOWN LEFT RIGHT A X L R` (combine with `+`; `HOLD` in frames, default 4). The
+Buttons: `B Y SEL START UP DOWN LEFT RIGHT A X L R`, and `MENU` for the armed in-game menu combo (combine
+with `+`; `HOLD` in frames, default 4 - 20 for `MENU`). The
 firmware log (printf) goes to the runner's stdout.
 
 ### Automated menu tests
@@ -190,6 +196,13 @@ model reproducing `cheat.v`: the interrupt vector hijack, the SNESCMD unlock wit
 window, the patched branch operands, the release on the hook's final `jmp ($FFxx)`, the reset hook
 (`$2A7D`), the 10 s holdoff, plus the `ctx.v` register shadows the menu restores on close. The bsnes chip
 feeds it what the cart edge sees outside its own ranges (vector fetch, bus writes, `$4016` reads, /RESET).
+The same machinery runs the rest of the in-game features, each with a test: **savestates** (Start+R saves
+- the handler freezes the game in the hook, the FPGA copier (`dma.v`, `$2020-$2029` or MCU `$D4`) stages
+the WRAM mirror, VRAM/CGRAM/OAM are read back and the MCU writes the 320 KB image to the card; Start+L
+replays it), the **gestures** the stub echoes to the MCU (L+R+Start+Select resets the game, L+R+Select+X
+goes back to the menu, L+R+Start+A/B cheats on/off, L+R+Start+Y / +X hooks off / off for 10 s), **WRAM
+cheats** (patch code the stub runs every NMI) and **ROM cheats** (served by the FPGA on read). The IRQ hook
+(for IRQ-only frame loops) and the USB exe hook (`$2C00`) are covered by `tests/test_fpga_model.cpp` only.
 ROMs never go into the repo: point
 `CICLONE_ROMS=<folder>` at your dumps (searched recursively, matched by No-Intro CRC32); without it, or
 without a matching dump, those tests report as skipped, not failed.
@@ -329,9 +342,10 @@ Ciclone is for **fast iteration**; the **final sign-off** is still a real build 
 - **Case 2** tests the **real binary**, but with **modeled** peripherals, not the silicon.
 
 In practice most loops happen in `run/dev.sh` / `run/test_menu.sh`; the hardware is for closing out.
-Plain LoROM/HiROM games and the in-game menu run (see *Real games* above), but not covered: savestates
-(the model does not mirror WRAM/VRAM/APU writes like `ctx.v` does, only the registers), coprocessor
-cores, hardware timing, audio.
+Plain LoROM/HiROM games, the in-game menu, savestates, gestures and cheats run (see *Real games* above),
+but not covered: coprocessor cores (and their savestate windows), the `ctx.v` WRAM/VRAM/APU mirrors (the
+savestate overwrites what it takes from them with a read-back of the console, so only the APU image in
+the state file is missing), hardware timing, audio.
 
 ---
 

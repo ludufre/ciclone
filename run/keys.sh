@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CENÁRIO: roteiro de botões headless -> screenshots PNG (firmware REAL + FpgaModel).
 #   bash run/keys.sh "<keys>" "<shots>" [frames] [sdimg]
-#   keys : "F:BTN[+BTN][:HOLD],..."  (BTN = B Y SEL START UP DOWN LEFT RIGHT A X L R;
+#   keys : "F:BTN[+BTN][:HOLD],..."  (BTN = B Y SEL START UP DOWN LEFT RIGHT A X L R MENU;
 #          HOLD em quadros, default 4)
 #   shots: "F:nome,..."               grava build/shots/<nome>.png depois do quadro F
 # Ex. (Y numa pasta MSU-1):

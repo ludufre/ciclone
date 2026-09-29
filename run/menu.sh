@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # CENÁRIO: abrir o menu do sd2snes numa JANELA interativa (firmware real + FpgaModel).
-# Controles: Setas=D-pad  Z=B X=A A=Y S=X  Enter=Start Shift=Select  Q=L W=R  ESC=sair
+# Controles: Setas=D-pad  Z=B X=A A=Y S=X  Enter=Start Shift=Select  Q=L W=R  M=menu in-game  ESC=sair
 set -e
 cd "$(dirname "$0")/.."
 bash tools/ensure_sd.sh

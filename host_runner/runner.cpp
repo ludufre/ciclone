@@ -47,7 +47,32 @@ static void vr(const uint16_t *data, unsigned width, unsigned height) {
 }
 static void ipoll(void) {}
 static int16_t g_buttons[16] = {0};   // estado dos botões (atualizado pelo SDL no modo --gui)
-static int16_t istate(bool, unsigned, unsigned, unsigned id) { return (id < 16) ? g_buttons[id] : 0; }
+// The in-game menu combo pressed by one key (the window's M, `MENU` in --keys): four buttons at
+// once on a keyboard often do not register (key rollover). Held for MENU_HOLD frames, then
+// released: the savestate handler opens the menu on the edge into "all held", but over SMW it
+// took 7 frames of holding before it did (6 never opened it), hence the margin.
+static uint16_t g_menu_mask = 0;
+static int g_menu_hold = 0;
+constexpr int MENU_HOLD = 20;
+static int16_t istate(bool, unsigned, unsigned, unsigned id) {
+  if (id >= 16) return 0;
+  return g_buttons[id] || (g_menu_hold > 0 && (g_menu_mask >> id & 1));
+}
+// The combo the firmware armed for the loaded game (MENU_COMBO $FF0704, SNES pad-register bit
+// order, valid only against ~combo at $FF0706 -- the same check ss_init makes), else the default
+// L+R+Y+Left ($4230). Pad-register bit 15-i is libsnes id i. Returned as a libsnes id mask.
+static uint16_t menu_combo_mask() {
+  uint16_t combo = 0x4230;
+  if (ciclone::FpgaModel *m = ciclone::active_model())
+    if (const uint8_t *ps = m->psram_ptr()) {
+      uint16_t c = ps[0xFF0704] | ps[0xFF0705] << 8, inv = ps[0xFF0706] | ps[0xFF0707] << 8;
+      if (c && (c ^ inv) == 0xFFFF) combo = c;
+    }
+  uint16_t mask = 0;
+  for (int i = 0; i < 12; i++) if (combo & (0x8000 >> i)) mask |= (uint16_t)(1u << i);
+  return mask;
+}
+static void press_menu_combo() { g_menu_mask = menu_combo_mask(); g_menu_hold = MENU_HOLD; }
 // audio: the window plays the S-SMP's output (the menu's music) mixed with the cartridge's
 // DAC as far as the FPGA model produces it (the menu's sound effects: FpgaModel::sfx_samples);
 // the headless modes drop it.
@@ -201,9 +226,9 @@ static void *fw_thread(void *) { ciclone_fw_main(); return nullptr; }  // nunca 
 
 // ---- entrada roteirizada (headless): --keys / --shots ----
 // --keys  "F:BTN[+BTN...][:HOLD],..."  aperta BTN no quadro F por HOLD quadros (default 4).
-//         BTN: B Y SEL START UP DOWN LEFT RIGHT A X L R.
+//         BTN: B Y SEL START UP DOWN LEFT RIGHT A X L R, or MENU (the armed in-game menu combo).
 // --shots "F:saida.ppm,..."            grava o quadro F (depois de emulado) em PPM.
-struct KeyEv { int frame, hold; uint16_t mask; };
+struct KeyEv { int frame, hold; uint16_t mask; bool menu; };
 struct ShotEv { int frame; std::string path; };
 static std::vector<KeyEv> g_keys;
 static std::vector<ShotEv> g_shots;
@@ -221,8 +246,12 @@ static void parse_keys(const char *arg) {
   for (auto &ev : split(arg, ',')) {
     if (ev.empty()) continue;
     auto f = split(ev, ':');
-    KeyEv k{atoi(f[0].c_str()), f.size() > 2 ? atoi(f[2].c_str()) : 4, 0};
-    for (auto &b : split(f.at(1), '+')) k.mask |= (uint16_t)(1u << btn_id(b));
+    KeyEv k{atoi(f[0].c_str()), f.size() > 2 ? atoi(f[2].c_str()) : 4, 0, false};
+    for (auto &b : split(f.at(1), '+')) {
+      if (b == "MENU") k.menu = true;
+      else k.mask |= (uint16_t)(1u << btn_id(b));
+    }
+    if (k.menu && f.size() <= 2) k.hold = MENU_HOLD;
     g_keys.push_back(k);
   }
 }
@@ -238,6 +267,7 @@ static void parse_shots(const char *arg) {
 // para --fwlog (line-buffered, o harness lê ao vivo). Comandos (uma linha, resposta "ok ..."):
 //   step N              roda N quadros com os botões atuais     -> ok <quadro>
 //   buttons MASK        segura os botões (hex, bit = id libsnes) -> ok
+//   menumask            o combo do menu in-game armado agora (a tecla M da janela) -> ok <hex>
 //   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam aram psram snescmd -> ok <hex>
 //   shot PATH           grava o último quadro em PPM             -> ok
 //   quit
@@ -256,6 +286,8 @@ static void serve_loop(ciclone::FpgaModel *m) {
       long n = 1; sscanf(line + 4, "%ld", &n);
       for (long i = 0; i < n; i++) { paced_run(); g_frame++; }
       fprintf(g_proto, "ok %ld\n", g_frame);
+    } else if (!strcmp(cmd, "menumask")) {
+      fprintf(g_proto, "ok %x\n", menu_combo_mask());
     } else if (!strcmp(cmd, "buttons")) {
       unsigned mask = 0; sscanf(line + 7, "%x", &mask);
       for (int i = 0; i < 16; i++) g_buttons[i] = (mask >> i) & 1;
@@ -309,8 +341,10 @@ static void serve_loop(ciclone::FpgaModel *m) {
 static void run_scripted_frame(int f) {
   for (int i = 0; i < 16; i++) g_buttons[i] = 0;
   for (auto &k : g_keys)
-    if (f >= k.frame && f < k.frame + k.hold)
-      for (int i = 0; i < 16; i++) if (k.mask & (1u << i)) g_buttons[i] = 1;
+    if (f >= k.frame && f < k.frame + k.hold) {
+      uint16_t mask = k.mask | (k.menu ? menu_combo_mask() : 0);
+      for (int i = 0; i < 16; i++) if (mask & (1u << i)) g_buttons[i] = 1;
+    }
   snes_frame();
   for (auto &s : g_shots) if (s.frame == f) write_ppm(s.path.c_str(), f + 1);
 }
@@ -348,7 +382,7 @@ static void run_gui(const char *title) {
     {SDL_SCANCODE_RETURN,3},{SDL_SCANCODE_RSHIFT,2},{SDL_SCANCODE_LSHIFT,2},
     {SDL_SCANCODE_Q,10},{SDL_SCANCODE_W,11},
   };
-  printf("Janela aberta. Setas=D-pad  Z=B X=A A=Y S=X  Enter=Start Shift=Select  Q=L W=R  ESC=sair\n");
+  printf("Janela aberta. Setas=D-pad  Z=B X=A A=Y S=X  Enter=Start Shift=Select  Q=L W=R  M=menu in-game  ESC=sair\n");
   fflush(stdout);
   bool running = true;
   while (running) {
@@ -356,12 +390,16 @@ static void run_gui(const char *title) {
     while (SDL_PollEvent(&ev)) {
       if (ev.type == SDL_QUIT) running = false;
       else if (ev.type == SDL_KEYDOWN && ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) running = false;
+      else if (ev.type == SDL_KEYDOWN && ev.key.keysym.scancode == SDL_SCANCODE_M) {
+        if (!ev.key.repeat) press_menu_combo();
+      }
       else if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
         int v = (ev.type == SDL_KEYDOWN) ? 1 : 0;
         for (auto &m : map) if (m.sc == ev.key.keysym.scancode) g_buttons[m.id] = v;
       }
     }
     snes_frame();  // 1 frame
+    if (g_menu_hold > 0) g_menu_hold--;
     g_frame++;
     if (adev && !g_audio.empty()) {
       // the cart's DAC (44100 Hz, this frame's: cart_frame) mixed into the S-SMP's frame
