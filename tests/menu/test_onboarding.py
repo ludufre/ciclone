@@ -59,9 +59,10 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 16
+NCARDS = 17
 MORE_CARD = 12      # "and more": the base tour's last card, 12 items (a list that scrolls)
-SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..16)
+SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..17)
+BOOT_CARD = 17      # the power-on screen (a Yes/No card of the 2.17 section)
 
 sys.path.insert(0, str(c.SD2SNES / "snes" / "utils"))
 import gen_onb_lang as onb  # noqa: E402  the tour's own strings (not in the menu dicts)
@@ -241,7 +242,7 @@ def test_tour_and_more_card(t):
     _enter_tour(m)
     _goto_card(m, MORE_CARD)
     assert m.has(otr(f"onb_f{MORE_CARD}_name")), m.text()          # "And more"
-    first = MORE_CARD + 5                                           # its items: 17..28
+    first = NCARDS + 1                                              # its items: after the cards
     assert m.has(para(first)), m.text()                            # item 1's text (themes)
     assert m.has(otr(f"onb_f{first}_name")), m.text()
     last = first + 11
@@ -260,7 +261,8 @@ def test_tour_and_more_card(t):
 
 def test_tour_217_section(t):
     """After the base tour, a card opens the 2.17 section, then the release's cards:
-    controller 2, Game Boy Color, the in-game shortcut list; then "all set"."""
+    controller 2, Game Boy Color, the in-game shortcut list, the power-on screen; then
+    "all set"."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     _goto_card(m, SECTION_CARD)
@@ -274,6 +276,29 @@ def test_tour_217_section(t):
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
 
+
+
+def test_tour_power_on_screen_card(t):
+    """The power-on screen card writes BootIntro. The card test boots with the screen on:
+    it plays before the tour question, and not again when the tour hands back to the menu
+    (a menu reload is not a power-on)."""
+    sd = t.sd(config=FRESH + "BootIntro: true\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, BOOT_CARD)
+    assert m.has(otr(f"onb_f{BOOT_CARD}_name")), m.text()
+    assert m.has(para(BOOT_CARD)), m.text()
+    m.press("DOWN")                        # Yes -> No
+    m.step(10)
+    m.press("A")                           # keep No: the last card, so "all set"
+    m.wait_text(otr("onb_ui_done_title"))
+    m.step(30)
+    m.press("A")
+    start = m.frame
+    _back_to_menu(m)
+    assert m.frame - start < 200, m.frame - start
+    m.close()
+    assert "BootIntro: false" in _cfg(t, sd), _cfg(t, sd)
 
 # the menu's silent S-DSP stub (snes/sfxdsp.i65), as the APU holds it at $0200: with the
 # music off the S-SMP runs it (the console gates the cart's MSU-1 DAC otherwise)

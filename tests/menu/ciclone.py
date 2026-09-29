@@ -122,6 +122,9 @@ def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra:
         config = "---\nOnboardingVersion: 255\n"
     elif "OnboardingVersion" not in config:
         config = config.rstrip("\n") + "\nOnboardingVersion: 255\n"
+    # Same for the power-on screen: it would hold the browser back ~2.6 s on every boot.
+    if "BootIntro" not in config:
+        config = config.rstrip("\n") + "\nBootIntro: false\n"
     cfg = None
     if config is not None:
         cfg = dest.with_suffix(".config.yml")
