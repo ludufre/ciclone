@@ -21,8 +21,8 @@ MENU_COMBO = {"L", "R", "Y", "LEFT"}   # CFG.ingame_buttons_menu default ($4230)
 TAB_ON = (82, 0, 255)                  # the in-game menu's highlighted tab (first tab at 12,10)
 
 
-def _play(t, name, rom, extra=None):
-    m = t.menu(t.sd(extra={f"/{name}": rom, **(extra or {})}))
+def _play(t, name, rom, extra=None, env=None):
+    m = t.menu(t.sd(extra={f"/{name}": rom, **(extra or {})}), env=env)
     m.goto(name)
     m.press("A")
     m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game card")
@@ -39,8 +39,8 @@ def _press_until(m, btn, pred, what, tries=10, after=90):
     assert pred(), f"{what}: still not there after {tries}x {btn}"
 
 
-def _smw_in_yoshis_house(t, extra=None):
-    m = _play(t, "Super Mario World.sfc", c.game_rom(SMW, "Super Mario World (USA)"), extra)
+def _smw_in_yoshis_house(t, extra=None, env=None):
+    m = _play(t, "Super Mario World.sfc", c.game_rom(SMW, "Super Mario World (USA)"), extra, env)
     mode = lambda: m.u8(SMW_MODE)                       # noqa: E731
     m.wait(lambda: mode() == 0x07, frames=900, what="the title screen")
     _press_until(m, "START", lambda: mode() == 0x14, "the intro level")
@@ -170,3 +170,33 @@ def test_wram_cheat(t):
     assert "RAM cheat #0: 7e0dbe 09" in m.fwlog()
     m.wait(lambda: m.u8(SMW_LIVES) == 9, frames=900, what="the pinned lives")   # after the holdoff
 
+
+
+def test_savestate_restores_the_music_bank(t):
+    """savestate_fixes.yml A0DA: a state does not carry the APU, and SMW uploads a different music
+    bank for levels and for the overworld. Saved in Yoshi's House and loaded from the overworld,
+    the fix re-runs the game's own upload for the loaded area on LOAD (not on save), so the APU
+    holds the level bank again instead of playing an overworld song under the level."""
+    m = _smw_in_yoshis_house(t)
+    level_aram = m.aram()
+    m.hold("START", "R")
+    m.step(20)
+    m.release()
+    m.wait(lambda: f"file_open ({SMW_STATE}, 0a)" in m.fwlog(), frames=600, what="the state file")
+    m.step(30)
+    _press_until(m, "START", lambda: m.u8(SMW_PAUSE) == 0, "unpaused", tries=3, after=40)
+    m.hold("RIGHT")                                     # out of the house: overworld, its music bank
+    m.wait(lambda: m.u8(SMW_MODE) == 0x0E, frames=1200, what="the overworld")
+    m.release()
+    m.step(120)
+    ow_aram = m.aram()
+    assert sum(x != y for x, y in zip(level_aram, ow_aram)) > 1000   # the two banks really differ
+    m.hold("START", "L")
+    m.step(20)
+    m.release()
+    m.step(90)
+    assert m.u8(SMW_MODE) == 0x14
+    back, _ = m.bank_match(m.aram(), level_aram, ow_aram)
+    assert back > 0.95, f"only {back:.0%} of the level bank is back in ARAM"
+    _press_until(m, "START", lambda: m.u8(SMW_PAUSE) == 0, "unpaused after the load", tries=3, after=40)
+    _walk(m, "LEFT")                                    # and the game runs on

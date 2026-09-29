@@ -7,6 +7,7 @@
 //
 // Framebuffer (snes/video/video.cpp:81): ponteiro=ppu.output+1024, pitch FIXO 1024
 // uint16/linha, pixel RGB555 0RRRRRGGGGGBBBBB.
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -78,7 +79,14 @@ static void press_menu_combo() { g_menu_mask = menu_combo_mask(); g_menu_hold = 
 // the headless modes drop it.
 static bool g_audio_on = false;
 static std::vector<int16_t> g_audio;
+// CICLONE_AUDIO_LEVEL=<file>: one line per SNES frame, "<frame> <rms>" of the S-SMP's output
+// (left channel) -- to see when a song stops or comes back without listening (0 = silence).
+static FILE *g_audio_level = nullptr;
+static FILE *g_trace_apu = nullptr;     // CICLONE_TRACE_APU, see trace_apu()
+static double g_level_ss = 0;
+static long g_level_n = 0;
 static void asample(uint16_t l, uint16_t r) {
+  if (g_audio_level) { g_level_ss += (double)(int16_t)l * (int16_t)l; g_level_n++; }
   if (!g_audio_on) return;
   g_audio.push_back((int16_t)l); g_audio.push_back((int16_t)r);
 }
@@ -92,6 +100,8 @@ static void asample(uint16_t l, uint16_t r) {
 // Pacing só por quadro NÃO basta: dentro do quadro a emulação corre em rajada.
 // CICLONE_SPEED = múltiplo do tempo real (default 4; 0 = sem limite).
 extern "C" unsigned ciclone_snes_frame_pos(void);
+extern "C" void ciclone_cpu_state(uint32_t *pc, uint16_t *sp);
+extern "C" uint8_t *ciclone_snes_memory(unsigned id, unsigned *size);
 static double g_speed = 0;          // 0 até o serve_loop ligar (gui/headless ficam sem ritmo)
 static long g_frame = 0;
 static double now_s() { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec * 1e-9; }
@@ -159,11 +169,33 @@ static void snes_frame(void) {
   if (ciclone_snes_reset_edge) { ciclone_snes_reset_edge = 0; snes_reset(); }
   if (!ciclone_snes_in_reset) {
     snes_run();
+    if (g_audio_level && g_level_n) {
+      fprintf(g_audio_level, "%ld %.0f\n", g_frame, sqrt(g_level_ss / g_level_n));
+      fflush(g_audio_level);
+      g_level_ss = 0; g_level_n = 0;
+    }
+    if (g_trace_apu) fflush(g_trace_apu);   // per frame: --serve leaves through _exit
     if (ciclone::FpgaModel *m = ciclone::active_model()) m->snes_frame();
   }
   cart_frame();
 }
 static void paced_run(void) { snes_frame(); pace((double)g_frame + 1); }
+
+// CICLONE_TRACE_APU=<file>: every S-CPU write to the APU ports $2140-$2143, one line each:
+//   <frame> <V>:<H> <port> <value> pc=<PB:PC> s=<S> ret=<the 12 bytes above S>
+// PC is past the writing instruction; the bytes above S hold the return addresses of the JSR/JSL
+// chain (low byte first, JSR pushes the address of its last byte), which is how the routine that
+// drives an upload and its callers show up. tools/apu_trace.py folds it (uploads, commands, callers).
+static void trace_apu(uint32_t addr, uint8_t data) {
+  uint32_t pc = 0; uint16_t sp = 0;
+  ciclone_cpu_state(&pc, &sp);
+  unsigned pos = ciclone_snes_frame_pos(), wsz = 0;
+  uint8_t *wram = ciclone_snes_memory(0, &wsz);
+  fprintf(g_trace_apu, "%ld %u:%u %04x %02x pc=%06x s=%04x ret=", g_frame, pos / 1364, pos % 1364,
+          addr & 0xffff, data, pc, sp);
+  for (int k = 1; k <= 12; k++) fprintf(g_trace_apu, "%02x", wram && wsz ? wram[(sp + k) % wsz] : 0);
+  fputc('\n', g_trace_apu);
+}
 
 // ---- hooks FORTES do chip sd2snes (sobrescrevem os weak do libsnes) ----
 extern "C" {
@@ -193,6 +225,7 @@ extern "C" {
     if (ciclone::FpgaModel *m = ciclone::active_model()) m->cpu_vector_fetch(vector, native);
   }
   void ciclone_chip_bus_snoop(uint32_t addr, uint8_t data, int write) {
+    if (g_trace_apu && write && !(addr & 0x400000) && (addr & 0xfffc) == 0x2140) trace_apu(addr, data);
     if (ciclone::FpgaModel *m = ciclone::active_model()) m->snoop(addr, data, write);
   }
   void ciclone_chip_reset(void) {
@@ -271,7 +304,6 @@ static void parse_shots(const char *arg) {
 //   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam aram psram snescmd -> ok <hex>
 //   shot PATH           grava o último quadro em PPM             -> ok
 //   quit
-extern "C" uint8_t *ciclone_snes_memory(unsigned id, unsigned *size);
 static FILE *g_proto = nullptr;
 
 static void serve_loop(ciclone::FpgaModel *m) {
@@ -434,6 +466,8 @@ static void run_gui(const char *title) { (void)title;
 
 int main(int argc, char **argv) {
   bool sd2snes = false, fw = false, gui = false, serve = false;
+  if (const char *f = getenv("CICLONE_TRACE_APU")) g_trace_apu = fopen(f, "w");
+  if (const char *f = getenv("CICLONE_AUDIO_LEVEL")) g_audio_level = fopen(f, "w");
   const char *fwlog = nullptr;
   const char *rompath = nullptr, *outpath = "frame.ppm"; int frames = 300;
   int pos = 0;

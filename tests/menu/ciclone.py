@@ -209,14 +209,14 @@ def sd_list(img: Path, path: str = "/") -> list[str]:
 
 # ---------------------------------------------------------------- o console
 class Menu:
-    def __init__(self, sd: Path, workdir: Path, fixed_time: str = FIXED_TIME):
+    def __init__(self, sd: Path, workdir: Path, fixed_time: str = FIXED_TIME, env: dict | None = None):
         if not RUNNER.exists():
             raise MenuError(f"{RUNNER} não existe -- rode tools/build_all.sh")
         self.sd, self.workdir = sd, workdir
         workdir.mkdir(parents=True, exist_ok=True)
         self.sym = Symbols()
         self.fwlog_path = workdir / "fw.log"
-        env = dict(os.environ, CICLONE_FIXED_TIME=fixed_time)
+        env = dict(os.environ, CICLONE_FIXED_TIME=fixed_time, **(env or {}))   # e.g. CICLONE_TRACE_APU
         self.err = open(workdir / "runner.err", "w")
         self.proc = subprocess.Popen([str(RUNNER), "--serve", "--fwlog", str(self.fwlog_path), str(sd)],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.err,
@@ -317,6 +317,20 @@ class Menu:
 
     def u16(self, addr: int | str) -> int:
         return int.from_bytes(self.wram(addr, 2), "little")
+
+    def aram(self) -> bytes:
+        """The S-SMP's 64 KB: its driver, samples and whatever song bank the game uploaded."""
+        return self.peek("aram", 0, 0x10000)
+
+    @staticmethod
+    def bank_match(now: bytes, a: bytes, b: bytes) -> tuple[float, float]:
+        """Over the bytes where snapshots `a` and `b` differ (two uploads, e.g. a level's and the
+        overworld's song bank), the fraction of `now` equal to `a` and equal to `b`. The driver's
+        own RAM ticks on in both, so compare these fractions, not whole snapshots."""
+        diff = [i for i in range(min(len(a), len(b), len(now))) if a[i] != b[i]]
+        if not diff:
+            return 1.0, 1.0
+        return (sum(now[i] == a[i] for i in diff) / len(diff), sum(now[i] == b[i] for i in diff) / len(diff))
 
     def psram(self, addr: int, n: int) -> bytes:
         """PSRAM; o menu enxerga $C00000-$FFFFFF no MESMO offset (BSRAM $FF... incluso)."""

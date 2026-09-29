@@ -41,6 +41,10 @@ if [ "${SD_MISC:-1}" = "1" ]; then
 fi
 IGM="${IGMENU:-$(dirname "$M3NU")/igmenu.bin}"
 [ -f "$IGM" ] && cp "$IGM" "$MNT/sd2snes/igmenu.bin"          # in-game menu shell (bank $C8)
+# per-game savestate combos and audio fixes, as a release card carries them (from the firmware tree)
+for f in savestate_inputs.yml savestate_fixes.yml; do
+  [ -f "$ROOT/extern/sd2snes/savestate/$f" ] && cp "$ROOT/extern/sd2snes/savestate/$f" "$MNT/sd2snes/$f"
+done
 printf 'CICLONE-DUMMY-FPGA-BITSTREAM' > "$MNT/sd2snes/fpga_base.bi3"
 # SD_CONFIG=<arquivo>: config.yml inicial (a firmware completa as chaves que faltarem no boot)
 [ -n "${SD_CONFIG:-}" ] && cp "$SD_CONFIG" "$MNT/sd2snes/config.yml"

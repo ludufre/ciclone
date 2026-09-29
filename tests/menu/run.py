@@ -63,6 +63,9 @@ class T:
         h.update(repr((config, fixtures, onboarding, misc, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
         for f in ("tools/make_sdimg.sh", "tools/sd_fixtures.py", "tests/menu/ciclone.py"):
             h.update((c.ROOT / f).read_bytes())
+        for f in ("savestate_inputs.yml", "savestate_fixes.yml"):     # copied onto every card
+            if (c.SD2SNES / "savestate" / f).exists():
+                h.update((c.SD2SNES / "savestate" / f).read_bytes())
         tpl = OUT / "_templates" / f"{h.hexdigest()[:16]}.img"
         with _sd_lock:
             if not tpl.exists():
@@ -74,9 +77,9 @@ class T:
         subprocess.run(["cp", "-c", str(tpl), str(dst)], check=True)
         return dst
 
-    def menu(self, sd: Path | None = None) -> c.Menu:
+    def menu(self, sd: Path | None = None, env: dict | None = None) -> c.Menu:
         sd = sd or self.sd()
-        m = c.Menu(sd, self.dir / f"run{len(self.menus) + 1}")
+        m = c.Menu(sd, self.dir / f"run{len(self.menus) + 1}", env=env)
         self.menus.append(m)
         m.wait(lambda: m.u16("listdisp") and m.list_rows(), frames=1200, what="o browser")
         m.settle()

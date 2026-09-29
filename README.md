@@ -199,7 +199,9 @@ feeds it what the cart edge sees outside its own ranges (vector fetch, bus write
 The same machinery runs the rest of the in-game features, each with a test: **savestates** (Start+R saves
 - the handler freezes the game in the hook, the FPGA copier (`dma.v`, `$2020-$2029` or MCU `$D4`) stages
 the WRAM mirror, VRAM/CGRAM/OAM are read back and the MCU writes the 320 KB image to the card; Start+L
-replays it), the **gestures** the stub echoes to the MCU (L+R+Start+Select resets the game, L+R+Select+X
+replays it; the card carries the firmware tree's `savestate/savestate_fixes.yml`, whose SMW entry re-uploads
+the music bank of the loaded area - the APU is not in a state, and SMW swaps banks between levels and the
+overworld), the **gestures** the stub echoes to the MCU (L+R+Start+Select resets the game, L+R+Select+X
 goes back to the menu, L+R+Start+A/B cheats on/off, L+R+Start+Y / +X hooks off / off for 10 s), **WRAM
 cheats** (patch code the stub runs every NMI) and **ROM cheats** (served by the FPGA on read). The IRQ hook
 (for IRQ-only frame loops) and the USB exe hook (`$2C00`) are covered by `tests/test_fpga_model.cpp` only.
@@ -211,7 +213,40 @@ Timing fidelity: `CICLONE_SYNC=0` turns off command sync (while the MCU handles 
 to `$2A00-$2FFF` wait for it to get back to polling - on hardware the MCU always wins that race; without
 it, 1 in 12 deletes lost the following READDIR even at real time), `CICLONE_SPEED` (default 4x real time
 in `--serve`, paced by the SNES beam clock), `CICLONE_TRACE_CMD=<file>` (timestamped MCU_CMD/SNES_CMD
-trace from both sides), `CICLONE_FIXED_TIME` (frozen clock).
+trace from both sides), `CICLONE_FIXED_TIME` (frozen clock), `CICLONE_TRACE_APU=<file>` /
+`CICLONE_AUDIO_LEVEL=<file>` (APU port writes with PC and stack / sound level per frame - see below).
+
+### Writing a savestate audio fix
+
+A state carries WRAM, VRAM and the registers, never the APU: after a load the game believes its sound
+CPU is in the state it had at the save, and it is not. `savestate_fixes.yml` (firmware tree, copied onto
+every card) patches that per game, keyed by the ROM header checksum, with code the savestate handler runs
+after every save and load. Most entries copy one byte (a WRAM echo counter <- the live `$214x` port); some
+games need code. `tools/ssfix/smw_a0da.s` (Super Mario World: re-upload the music bank of the loaded
+area) was found and verified with the tools below - the same loop works for any game:
+
+1. **Reproduce and trace.** Run the case with the APU ports traced and the sound level logged:
+   `CICLONE_TRACE_APU=build/apu.log CICLONE_AUDIO_LEVEL=build/level.log bash run/menu.sh` (or `env=`
+   on `t.menu()` / `_play()` in a test). The level log is `<frame> <rms>` per frame: 0 = silence.
+2. **Read what the game says to the APU:** `python3 tools/apu_trace.py build/apu.log --from F --callers`.
+   Uploads (IPL transfers of the driver, samples or a song bank) are folded into one line; the other lines
+   are commands (song requests, sound effects, pause, handshakes) with the PC that wrote them.
+3. **Find the routine to call again.** The upload lines and `--callers` list the JSRs found on the stack
+   (candidates - check them in the ROM): the routine that picks and uploads the right bank, and who calls
+   it on each area change. Then find where the game keeps the song it asks for (a request byte its NMI
+   copies to a port, a "current song" variable, a table indexed by map/level).
+4. **Write the fix** as a `tools/ssfix/<game>_<chk>.s` source (header `; key:`, `; name:`, `;|` notes)
+   and assemble it: `python3 tools/ss65.py tools/ssfix/<file>.s` prints the entry (split into 64-byte
+   `@` items); paste it into the firmware tree's `savestate/savestate_fixes.yml`. Rules the SMW one
+   follows: it runs after saves too, so test `CS_SA1_LOAD` (`$FE1013`, 1 = load) if it must act only
+   on a load; it starts with A 8-bit / X 16-bit and unknown DBR/D - set what the game's code expects and
+   restore them; stay position independent (`brl`/`per`), other entries may come first; a game routine
+   that ends in `RTS` is reached from bank `$FE` through an RTL trampoline (`phk`, `per back-1`, `pea
+   <a $6B byte in the routine's bank>-1`, `jml routine`).
+5. **Prove it.** `m.aram()` + `Menu.bank_match()` compare the APU memory with two known snapshots (the
+   bank of area A vs area B); write the test so it fails without the entry (`test_savestate_restores_the_
+   music_bank` does - remove the entry and it reports 0% of the level bank back). `test_ssfix` keeps each
+   `.s` and its `.yml` entry identical.
 
 ---
 
@@ -357,7 +392,8 @@ scripts rebuild the image by themselves when that menu changes), a dummy
 `fpga_base.bi3`, and a **test tree** (`tools/sd_fixtures.py`): a loose ROM, an MSU-1 folder, a folder with
 two ROMs and an empty folder. It uses macOS-native `hdiutil` - no mtools; the `._*` files macOS writes to
 FAT are removed before unmounting. Its `config.yml` gets `ResetPatch: false` unless the given config names
-the key: with the reset patch on, the reset hook times an H-IRQ against `$4212` to catch a misaligned
+the key, and the firmware tree's `savestate/savestate_inputs.yml` / `savestate_fixes.yml` go into
+`/sd2snes/` like on a release card. With the reset patch on, the reset hook times an H-IRQ against `$4212` to catch a misaligned
 CPU/PPU clock phase and resets until it passes - random on a console, a guaranteed fail on bsnes' fixed
 timing, so every game would reset forever.
 
@@ -457,7 +493,7 @@ The runner's own knobs (`CICLONE_SYNC`, `CICLONE_SPEED`, `CICLONE_TRACE_CMD`, `C
 | `m4_unicorn/` | LPC1756 (Cortex-M3) emulator that runs the real `.im3` + glue to the FpgaModel |
 | `include/` | `ciclone_seam.h` - the C ABI of the SPI seam |
 | `tests/` | tests (FpgaModel, Verilated SPI/sim, FxPak INFO/PTY, VCD trace); `tests/menu/` = the menu suite |
-| `tools/` | `setup.sh`, `build_all.sh`, `build_menu.sh`, `make_sdimg.sh`, `sd_fixtures.py`, `fetch_m4fw.sh`, `ppm2png.py` |
+| `tools/` | `setup.sh`, `build_all.sh`, `build_menu.sh`, `make_sdimg.sh`, `sd_fixtures.py`, `fetch_m4fw.sh`, `ppm2png.py`, `ss65.py` + `ssfix/` (savestate fixes), `apu_trace.py` |
 | `renode/` | (alternative M4) Renode scaffold + assessment - unused; Unicorn is the active path |
 
 > **Never edit `extern/sd2snes` for Ciclone's sake.** HAL/header overrides win by `-I` ordering (same trick
