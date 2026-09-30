@@ -97,3 +97,30 @@ def test_context_mode_game_info_from_msu_folder(t):
     assert m.list_names() == ROOT, m.list_names()
     assert m.selected() == "MSU Game/" and m.u8("msu_inside") == 0
     assert m.u16("window_stack_head") == 0xFFFF
+
+
+def test_cheats_from_msu_folder_context_returns_to_the_parent(t):
+    """Y numa pasta MSU-1 -> Cheats (o jogo tem cheats) -> B volta à pasta de cima.
+
+    Na saída da lista o menu grava os cheats e, logo depois, relê a pasta de cima. O
+    "ack" que o menu escrevia em MCU_CMD depois de cada comando era $55, e o MCU o
+    executava como um comando 85: se a releitura chegasse enquanto ele tratava esse 85,
+    ela era apagada e o browser ficava mostrando o conteúdo da pasta. Aqui o MCU é rápido
+    demais para a corrida aparecer, então o teste pega a causa: nenhum 85 no log."""
+    cht = b'---\n- Name: "Probe cheat"\n  Enabled: false\n  Code:\n  - "7E1F2A00"\n'
+    m = t.menu(t.sd(extra={"/sd2snes/cheats/MS/msugame.yml": cht}))
+    _open_context(m, "MSU Game/")
+    m.press("DOWN")
+    m.step(10)
+    assert m.has(c.tr("text_filesel_context_cheats")), m.text()
+    m.press("A")                                   # a lista de cheats
+    m.wait_text("Probe cheat")
+    m.press("A")                                   # liga o cheat: a saída grava o .yml
+    m.settle()
+    m.press("B")
+    m.settle()
+    assert m.list_names() == ROOT, m.list_names()
+    assert m.selected() == "MSU Game/" and m.u8("msu_inside") == 0
+    log = m.fwlog()
+    assert "cmd: 85" not in log, "o menu mandou o ack $55 como comando\n" + log[-2000:]
+    m.close()
