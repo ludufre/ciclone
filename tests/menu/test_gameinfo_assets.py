@@ -65,3 +65,77 @@ def test_game_info_with_description_cover_and_guide(t):
     log = m.fwlog()
     assert "scratch:" not in log, log[-2000:]
     m.close()
+
+
+CHT = b'---\n- Name: "Probe cheat"\n  Enabled: false\n  Code:\n  - "7E1F2A00"\n'
+BROWSER = ["Empty Folder/", "MSU Game/", "Two Games/", "Test Game.sfc"]
+
+
+def _ficha(m, title):
+    m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has(title), what="a ficha")
+    m.settle()
+
+
+def _cheats_from_ficha_and_back(m, title):
+    """SELECT na ficha abre a lista de cheats do jogo; A liga o cheat (a saida grava o .yml);
+    B fecha a lista e volta para a MESMA ficha."""
+    assert m.has("Sel:Cheats") or m.has("Sel: Cheats"), "o rodape nao anuncia o SELECT\n" + m.text()
+    m.press("SEL")
+    m.wait_text("Probe cheat")
+    assert m.u16("screen_dma_disable") == 0            # a lista e uma janela do menu
+    m.press("A")
+    m.settle()
+    m.press("B")
+    _ficha(m, title)
+
+
+def test_select_on_game_info_opens_the_cheats(t):
+    sd = t.sd(extra={"/sd2snes/cheats/TE/Test Game.yml": CHT})
+    m = t.menu(sd)
+    m.goto("Test Game.sfc")
+    m.press("A")
+    _ficha(m, "Test Game")
+    _cheats_from_ficha_and_back(m, "Test Game")
+    m.press("B")                                       # e a ficha continua saindo para o browser
+    m.wait(lambda: m.u16("screen_dma_disable") == 0, what="sair da ficha")
+    m.settle()
+    assert m.list_names() == BROWSER and m.selected() == "Test Game.sfc", m.list_names()
+    assert m.u16("window_stack_head") == 0xFFFF
+    m.close()
+    assert b"Enabled: true" in t.read(sd, "/sd2snes/cheats/TE/Test Game.yml")
+
+
+def test_select_on_msu_folder_game_info_opens_its_rom_cheats(t):
+    sd = t.sd(extra={"/sd2snes/cheats/MS/msugame.yml": CHT})
+    m = t.menu(sd)
+    m.goto("MSU Game/")
+    m.press("A")
+    _ficha(m, "msugame")
+    _cheats_from_ficha_and_back(m, "msugame")
+    assert m.u8("msu_inside") == 1
+    m.press("B")
+    m.wait(lambda: m.u16("screen_dma_disable") == 0, what="sair da ficha")
+    m.settle()
+    assert m.list_names() == BROWSER and m.selected() == "MSU Game/", m.list_names()
+    assert m.u8("msu_inside") == 0
+    m.close()
+    assert b"Enabled: true" in t.read(sd, "/sd2snes/cheats/MS/msugame.yml")
+
+
+def test_select_on_recent_game_info_opens_its_cheats(t):
+    sd = t.sd(extra={"/sd2snes/lastgame.cfg": b"/Two Games/second.sfc\n/Test Game.sfc\n",
+                     "/sd2snes/cheats/TE/Test Game.yml": CHT})
+    m = t.menu(sd)
+    m.press("START")
+    m.wait_text(c.tr("text_last"))
+    m.press("DOWN")
+    m.step(10)
+    m.press("A")
+    _ficha(m, "Test Game")
+    _cheats_from_ficha_and_back(m, "Test Game")
+    m.press("B")
+    m.wait(lambda: m.u16("screen_dma_disable") == 0, what="sair da ficha")
+    m.settle()
+    assert m.has(c.tr("text_last")), m.text()          # de volta a lista de Recentes
+    m.close()
+    assert b"Enabled: true" in t.read(sd, "/sd2snes/cheats/TE/Test Game.yml")
