@@ -1,8 +1,9 @@
 """Real games, loaded the real way (card -> Play -> firmware) and played on the FPGA model's mappers.
 
 The ROMs are commercial and never go into the repo: each test looks its dump up by CRC32 under
-$CICLONE_ROMS (see ciclone.game_rom) and is skipped when it is not there. Asserts read the game's
-own WRAM state (game mode, player position), so they do not depend on pixels or exact frame counts.
+roms/ (git-ignored) or $CICLONE_ROMS (see ciclone.game_rom) and is skipped when it is not there.
+Asserts read the game's own WRAM state (game mode, player position), so they do not depend on
+pixels or exact frame counts.
 """
 from pathlib import Path
 

@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNNER = ROOT / "build" / "host_runner_fw"
+RUNNER = Path(os.environ.get("CICLONE_RUNNER") or ROOT / "build" / "host_runner_fw")   # COVERAGE=1 troca pelo instrumentado
 MENU_DIR = Path(os.environ.get("CICLONE_MENU", ROOT / "build" / "menu"))
 SD2SNES = ROOT / "extern" / "sd2snes"   # a árvore da firmware (src/, snes/, verilog/)
 FIXED_TIME = "2026-01-02 03:04:05"
@@ -49,16 +49,16 @@ class Skip(Exception):
 
 # ---------------------------------------------------------------- real game ROMs
 # Commercial ROMs never go into the repo. Tests that need one look it up by CRC32 (No-Intro,
-# without a copier header) under $CICLONE_ROMS (searched recursively) and skip when it is absent.
+# without a copier header) under roms/ or $CICLONE_ROMS (searched recursively) and skip when absent.
 ROM_EXTS = (".sfc", ".smc")
 _rom_crcs: dict[tuple[str, int, float], int] = {}
 
 
 def game_rom(crc: int, what: str) -> bytes:
     import zlib
-    top = os.environ.get("CICLONE_ROMS")
-    if not top:
-        raise Skip(f"{what}: set CICLONE_ROMS to a folder with SNES ROMs")
+    top = os.environ.get("CICLONE_ROMS") or str(ROOT / "roms")   # roms/ = git-ignored local dumps
+    if not Path(top).expanduser().is_dir():
+        raise Skip(f"{what}: put SNES ROMs in roms/ (or set CICLONE_ROMS)")
     for f in sorted(Path(top).expanduser().rglob("*")):
         if f.suffix.lower() not in ROM_EXTS or not f.is_file():
             continue

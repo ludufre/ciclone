@@ -24,3 +24,7 @@ __pycache__/
 
 # config local (servidor de build, checkout da firmware)
 .ciclone.env
+
+# ROMs locais para os testes de jogo (tests/menu/test_games.py); so o README e versionado
+/roms/*
+!/roms/README.md
