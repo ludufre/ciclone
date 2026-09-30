@@ -17,8 +17,9 @@ def test_fix_sources_match_the_yml(t):
     assert sources
     for src in sources:
         code, meta = ss65.assemble(src.read_text())
-        have = ss65.yaml_blob(yml, meta["key"])
-        assert have == code, f"{FIXES.name}: {meta['key']} != {src.name} -- python3 tools/ss65.py {src}"
+        for key in ss65.keys(meta):
+            have = ss65.yaml_blob(yml, key)
+            assert have == code, f"{FIXES.name}: {key} != {src.name} -- python3 tools/ss65.py {src}"
 
 
 def test_ss65_encodings(t):

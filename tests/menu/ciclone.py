@@ -332,6 +332,24 @@ class Menu:
             return 1.0, 1.0
         return (sum(now[i] == a[i] for i in diff) / len(diff), sum(now[i] == b[i] for i in diff) / len(diff))
 
+    @staticmethod
+    def load_match(now: bytes, before: bytes, target: bytes, ignore: set | None = None) -> tuple[int, float]:
+        """(bytes that changed from `before` to `now`, fraction of them equal to `target`). For a
+        song upload that only rewrites the new song's own range: the rest of the previous song and
+        older leftovers stay behind, so compare what the upload wrote, not the whole bank.
+        `ignore`: addresses the driver rewrites on its own (Menu.volatile), e.g. the echo buffer."""
+        ignore = ignore or set()
+        changed = [i for i in range(min(len(now), len(before), len(target))) if now[i] != before[i] and i not in ignore]
+        if not changed:
+            return 0, 0.0
+        return len(changed), sum(now[i] == target[i] for i in changed) / len(changed)
+
+    @staticmethod
+    def volatile(*snaps: bytes) -> set:
+        """ARAM addresses that differ between snapshots of one scene: what the driver keeps
+        rewriting while a song plays (echo buffer, track state) -- noise for load_match."""
+        return {i for i in range(len(snaps[0])) if any(s[i] != snaps[0][i] for s in snaps[1:])}
+
     def psram(self, addr: int, n: int) -> bytes:
         """PSRAM; o menu enxerga $C00000-$FFFFFF no MESMO offset (BSRAM $FF... incluso)."""
         return self.peek("psram", addr & 0xFFFFFF, n)

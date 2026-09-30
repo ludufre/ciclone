@@ -247,7 +247,8 @@ está como estava no save, e não está. O `savestate_fixes.yml` (árvore da fir
 cartão) corrige isso por jogo, pela checksum do header da ROM, com código que o handler de savestate roda
 depois de todo save e load. A maioria das entradas copia um byte (um contador de eco na WRAM <- a porta
 `$214x` ao vivo); alguns jogos precisam de código. O `tools/ssfix/smw_a0da.s` (Super Mario World: subir de
-novo o banco de músicas da área carregada) foi achado e validado com as ferramentas abaixo - o mesmo
+novo o banco de músicas da área carregada) e o `tools/ssfix/dkc3_b28c.s` / `dkc2_1202.s` / `dkc1_ef80.s` (Donkey Kong
+Country 3/2/1: tocar de novo a música da cena carregada) foram achados e validados com as ferramentas abaixo - o mesmo
 ciclo serve para qualquer jogo:
 
 1. **Reproduza e trace.** Rode o caso com as portas da APU traçadas e o nível do som registrado:
@@ -267,7 +268,10 @@ ciclo serve para qualquer jogo:
    load; ela começa com A 8 bits / X 16 bits e DBR/D desconhecidos - ajuste o que o código do jogo espera
    e restaure; seja independente de posição (`brl`/`per`), outras entradas podem vir antes; uma rotina do
    jogo que termina em `RTS` é alcançada do banco `$FE` por um trampolim de RTL (`phk`, `per volta-1`,
-   `pea <um byte $6B no banco da rotina>-1`, `jml rotina`).
+   `pea <um byte $6B no banco da rotina>-1`, `jml rotina`). Dentro do hook os bancos `$C0-$FF` são a
+   PSRAM do handler, não a ROM do jogo: uma rotina que lê seus dados ali (jogos HiROM) não roda da
+   correção - o `tools/ssfix/dkc3_b28c.s` adia a chamada, plantando uma rotina de uma vez só em WRAM livre
+   e apontando o despacho de NMI do jogo para ela, que roda no primeiro NMI depois do hook.
 5. **Prove.** `m.aram()` + `Menu.bank_match()` comparam a memória da APU com dois instantâneos conhecidos
    (o banco da área A x o da área B); escreva o teste de modo que falhe sem a entrada (o
    `test_savestate_restores_the_music_bank` falha - tire a entrada e ele acusa 0% do banco da fase de

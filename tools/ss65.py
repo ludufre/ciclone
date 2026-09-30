@@ -11,7 +11,8 @@ X 16-bit, ended by the RTL the firmware appends. The YAML parser takes at most 6
 item, so a longer blob is split over consecutive list items (they land back to back).
 
 Source syntax (one instruction per line, `;` comments):
-    ; key: A0DA                      the ROM header checksum the entry is for ($FFDE/$7FDE)
+    ; key: A0DA                      the ROM header checksum(s) the entry is for ($FFDE/$7FDE);
+                                     several (key: 1202 9860) = one entry each, same code
     ; name: super mario world (US)   text after the key on the entry line
     ;| ...                           a comment line copied into the entry (indented under the key)
     name = $FE1013                   a constant (its width = its hex digits: 2 dp, 4 abs, 6 long)
@@ -20,6 +21,9 @@ Source syntax (one instruction per line, `;` comments):
             .db $6B, $00             raw bytes
 Operands: #$12 / #name (immediate, sized by A or X), $12 (dp), $1234 (abs), $123456 or @$1234
 (long), ,x / ,y indexing, a label for branches (8-bit), brl/per (16-bit, may be label+N / label-N).
+An operand may be an expression of numbers, constants and labels joined by + and - (a label is
+its offset in the blob); one that names a label is absolute unless forced. Force the width with
+a .b / .w / .l suffix on the mnemonic (sta.l dest = long).
 Only the opcodes below exist -- add rows to OPS when a fix needs more.
 """
 from __future__ import annotations
@@ -73,6 +77,24 @@ class AsmError(Exception):
     pass
 
 
+def expr(text: str, consts: dict, labels: dict | None) -> tuple[int, int]:
+    """(value, width in hex digits) of `a+b-c`; labels unknown in pass 1 (labels=None) count 0."""
+    terms = re.findall(r"([+-]?)([^+-]+)", text)
+    if not terms or "".join(sgn + t for sgn, t in terms) != text:
+        raise AsmError(f"bad expression {text!r}")
+    total, digits, named = 0, 0, False
+    for sgn, t in terms:
+        if labels is not None and t in labels or labels is None and re.fullmatch(r"[A-Za-z_]\w*", t) and t not in consts:
+            v, named = (labels or {}).get(t, 0), True
+        else:
+            v, d = number(t, consts)
+            digits = max(digits, d)
+        total += -v if sgn == "-" else v
+    if named or len(terms) > 1:
+        digits = max(digits, 4)
+    return total & 0xFFFFFF, digits
+
+
 def number(tok: str, consts: dict) -> tuple[int, int]:
     """(value, hex digits) of $hex / decimal / a constant."""
     if tok.startswith("$"):
@@ -113,6 +135,11 @@ def assemble(src: str) -> tuple[bytes, dict]:
             return b"", sizes
         mnem, _, arg = rest.partition(" ")
         mnem, arg = mnem.lower(), arg.strip().replace(" ", "")
+        force = None
+        if "." in mnem[1:]:
+            mnem, force = mnem.split(".", 1)
+            if force not in ("b", "w", "l"):
+                raise AsmError(f"bad size suffix .{force}")
         if mnem in (".a8", ".a16", ".x8", ".x16"):
             reg, bits = mnem[1], int(mnem[2:])
             return b"", {**sizes, reg: bits}
@@ -143,8 +170,9 @@ def assemble(src: str) -> tuple[bytes, dict]:
                     raise AsmError(f"branch to {arg} out of range ({d})")
                 return bytes([modes[mode], d & 0xFF]), sizes
             return bytes([modes[mode], d & 0xFF, (d >> 8) & 0xFF]), sizes
+        known = labels if final else None
         if arg.startswith("#"):
-            v, _ = number(arg[1:], consts)
+            v, _ = expr(arg[1:], consts, known)
             if mnem in ("rep", "sep"):
                 a16 = sizes["a"] if not v & 0x20 else (16 if mnem == "rep" else 8)
                 x16 = sizes["x"] if not v & 0x10 else (16 if mnem == "rep" else 8)
@@ -157,10 +185,12 @@ def assemble(src: str) -> tuple[bytes, dict]:
         if arg.startswith("(") and arg.endswith(")"):
             v, _ = number(arg[1:-1], consts)
             return bytes([modes["ind"]]) + v.to_bytes(2, "little"), sizes
-        forced_long = arg.startswith("@")
+        forced_long = arg.startswith("@") or force == "l"
         base, _, index = arg.lstrip("@").partition(",")
-        v, digits = number(base, consts)
-        kind = "long" if forced_long or digits > 4 else "abs" if digits > 2 else "dp"
+        v, digits = expr(base, consts, known)
+        kind = ("long" if forced_long or digits > 4 else "abs" if force == "w" or digits > 2 else "dp")
+        if force == "b":
+            kind = "dp"
         mode = kind + (index.lower() if index else "")
         if mode not in modes:
             raise AsmError(f"{mnem} has no {mode} mode")
@@ -183,13 +213,20 @@ def assemble(src: str) -> tuple[bytes, dict]:
     return code, meta
 
 
-def yaml_entry(code: bytes, meta: dict) -> str:
+def keys(meta: dict) -> list[str]:
     if not meta["key"]:
         raise AsmError("no '; key: XXXX' line in the source")
-    head = f"{meta['key']}:" + (f" # {meta['name']}" if meta["name"] else "")
+    return meta["key"].split()
+
+
+def yaml_entry(code: bytes, meta: dict) -> str:
     notes = [f"      #{t}" if t else "      #" for t in meta["notes"]]
     items = [f"  - @{code[i:i + 64].hex().upper()}" for i in range(0, len(code), 64)]
-    return "\n".join([head, *notes, *items]) + "\n"
+    out = []
+    for k in keys(meta):
+        head = f"{k}:" + (f" # {meta['name']}" if meta["name"] else "")
+        out += [head, *notes, *items]
+    return "\n".join(out) + "\n"
 
 
 def yaml_blob(yml: str, key: str) -> bytes | None:
@@ -220,10 +257,11 @@ def main():
     except AsmError as e:
         sys.exit(f"{a.source}: {e}")
     if a.check:
-        have = yaml_blob(Path(a.check).read_text(), meta["key"])
-        if have != code:
-            sys.exit(f"{a.check}: {meta['key']} does not match {a.source} ({len(code)} bytes)")
-        print(f"ok: {meta['key']} in {a.check} = {a.source} ({len(code)} bytes)")
+        yml = Path(a.check).read_text()
+        for k in keys(meta):
+            if yaml_blob(yml, k) != code:
+                sys.exit(f"{a.check}: {k} does not match {a.source} ({len(code)} bytes)")
+            print(f"ok: {k} in {a.check} = {a.source} ({len(code)} bytes)")
     elif a.hex:
         print(code.hex().upper())
     else:

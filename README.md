@@ -223,7 +223,9 @@ CPU is in the state it had at the save, and it is not. `savestate_fixes.yml` (fi
 every card) patches that per game, keyed by the ROM header checksum, with code the savestate handler runs
 after every save and load. Most entries copy one byte (a WRAM echo counter <- the live `$214x` port); some
 games need code. `tools/ssfix/smw_a0da.s` (Super Mario World: re-upload the music bank of the loaded
-area) was found and verified with the tools below - the same loop works for any game:
+area) and `tools/ssfix/dkc3_b28c.s` / `dkc2_1202.s` / `dkc1_ef80.s` (Donkey Kong Country 3/2/1: replay the loaded
+scene's song) were found
+and verified with the tools below - the same loop works for any game:
 
 1. **Reproduce and trace.** Run the case with the APU ports traced and the sound level logged:
    `CICLONE_TRACE_APU=build/apu.log CICLONE_AUDIO_LEVEL=build/level.log bash run/menu.sh` (or `env=`
@@ -242,7 +244,10 @@ area) was found and verified with the tools below - the same loop works for any 
    on a load; it starts with A 8-bit / X 16-bit and unknown DBR/D - set what the game's code expects and
    restore them; stay position independent (`brl`/`per`), other entries may come first; a game routine
    that ends in `RTS` is reached from bank `$FE` through an RTL trampoline (`phk`, `per back-1`, `pea
-   <a $6B byte in the routine's bank>-1`, `jml routine`).
+   <a $6B byte in the routine's bank>-1`, `jml routine`). Inside the hook, banks `$C0-$FF` are the
+   handler's PSRAM, not the game's ROM: a routine that reads its data there (HiROM games) cannot run
+   from the fix - `tools/ssfix/dkc3_b28c.s` defers the call instead, planting a one-shot routine in
+   free WRAM and pointing the game's NMI dispatch at it, so it runs on the first NMI after the hook.
 5. **Prove it.** `m.aram()` + `Menu.bank_match()` compare the APU memory with two known snapshots (the
    bank of area A vs area B); write the test so it fails without the entry (`test_savestate_restores_the_
    music_bank` does - remove the entry and it reports 0% of the level bank back). `test_ssfix` keeps each

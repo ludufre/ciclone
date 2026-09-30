@@ -4,10 +4,14 @@ The ROMs are commercial and never go into the repo: each test looks its dump up 
 $CICLONE_ROMS (see ciclone.game_rom) and is skipped when it is not there. Asserts read the game's
 own WRAM state (game mode, player position), so they do not depend on pixels or exact frame counts.
 """
+from pathlib import Path
+
 import ciclone as c
 
 SMW = 0xB19ED489    # Super Mario World (USA): LoROM, 512 KB, no coprocessor
 DKC3 = 0x448EEC19   # Donkey Kong Country 3 (USA) (En,Fr): HiROM, 4 MB, no coprocessor
+DKC1 = 0xC946DCA0   # Donkey Kong Country (USA) v1.0
+DKC2 = 0x006364DB   # Donkey Kong Country 2 - Diddy's Kong Quest (USA) (En,Fr) v1.0
 
 SMW_MODE = 0x7E0100       # game mode: $07 title, $08 file select, $0E overworld, $14 level
 SMW_MARIO_X = 0x7E0094
@@ -200,3 +204,94 @@ def test_savestate_restores_the_music_bank(t):
     assert back > 0.95, f"only {back:.0%} of the level bank is back in ARAM"
     _press_until(m, "START", lambda: m.u8(SMW_PAUSE) == 0, "unpaused after the load", tries=3, after=40)
     _walk(m, "LEFT")                                    # and the game runs on
+
+
+def _dkc3_in_wrinklys_cabin(t, env=None):
+    m = _play(t, "DKC3.sfc", c.game_rom(DKC3, "Donkey Kong Country 3 (USA) (En,Fr)"), env=env)
+    screen = lambda: m.u8(DKC3_SCREEN)                  # noqa: E731
+    m.step(1300)
+    _press_until(m, "START", lambda: screen() == 0x02, "Select Game", after=120)
+    _press_until(m, "A", lambda: screen() == 0x04, "Choose Play Mode", after=120)
+    _press_until(m, "A", lambda: screen() == 0x06, "Enter Name", after=240)
+    m.press("START", hold=6, after=700)                 # the map, and a new game walks into the cabin
+    m.step(400)
+    return m
+
+
+def test_savestate_restores_the_song_dkc3(t):
+    """savestate_fixes.yml B28C (tools/ssfix/dkc3_b28c.s): Rare's driver holds one song, uploaded per
+    scene, and the state does not carry it. Saved in Wrinkly's cabin and loaded from the map, the
+    fix replays the cabin's song -- from a one-shot NMI routine after the hook, since the song
+    tables sit in $ED/$EE, behind the hook's $C0-$FF window. DKC3's savestate combos are X+R/X+L."""
+    m = _dkc3_in_wrinklys_cabin(t)
+    cabin = m.aram()
+    m.hold("X", "R")
+    m.step(20)
+    m.release()
+    m.wait(lambda: "DKC301.state, 0a" in m.fwlog(), frames=900, what="the state file")
+    m.step(60)
+    for _ in range(8):                                  # through Wrinkly's lines...
+        m.press("A", hold=6, after=90)
+    for _ in range(5):                                  # ...and out, to the map and its song
+        m.press("B", hold=6, after=150)
+    m.step(200)
+    on_map = m.aram()
+    assert sum(x != y for x, y in zip(cabin, on_map)) > 1000
+    m.hold("X", "L")
+    m.step(20)
+    m.release()
+    m.step(250)                                         # the hook, then the upload (~50 frames)
+    back, stale = m.bank_match(m.aram(), cabin, on_map)
+    # Rare's driver keeps rewriting its own ARAM while a song plays, so "the same song at another
+    # moment" tops out near 93% here (without the fix it reads 0% cabin / 93% map)
+    assert back > 0.85 and stale < 0.2, f"ARAM after the load: {back:.0%} cabin song, {stale:.0%} map song"
+    assert m.u16(0x7E004A) != 0x0110, "the one-shot NMI routine is still hooked"
+
+
+def _dk_song_back_after_load(t, crc, what, name, song, map_song, level_song, dispatch, mode_song=None):
+    """Save on the world map, walk into the first level (another song), load: the fix must replay
+    the map's song. Measured on what the load rewrote in ARAM, minus what the driver rewrites on
+    its own while a song plays (echo buffer, track state)."""
+    m = _play(t, name, c.game_rom(crc, what))
+    now = lambda: m.u16(song)                           # noqa: E731
+    m.step(600)
+    for _ in range(3):
+        m.press("START", hold=6, after=200)
+    if mode_song is not None:
+        m.wait(lambda: now() == mode_song, frames=900, what="the mode screen")
+    _press_until(m, "A", lambda: now() == map_song, "the map", after=300)
+    m.step(200)
+    on_map = m.aram()
+    m.step(60)
+    noise = m.volatile(on_map, m.aram())
+    m.hold("X", "R")
+    m.step(20)
+    m.release()
+    m.wait(lambda: f"{Path(name).stem}01.state, 0a" in m.fwlog(), frames=900, what="the state file")
+    m.step(60)
+    _press_until(m, "A", lambda: now() == level_song, "the first level", after=300)
+    m.step(300)
+    in_level = m.aram()
+    for _ in range(4):                                  # the handler's post-save cooldown can eat
+        m.hold("X", "L")                                # the first load after few button presses
+        m.step(20)
+        m.release()
+        m.step(300)
+        if now() != level_song:
+            break
+    assert now() == map_song, "the load did not happen"
+    n, frac = m.load_match(m.aram(), in_level, on_map, noise)
+    assert n > 2000 and frac > 0.9, f"the load rewrote {n} ARAM bytes, {frac:.0%} of them the map's"
+    assert m.u16(dispatch) != 0x0110, "the one-shot NMI routine is still hooked"
+
+
+def test_savestate_restores_the_song_dkc1(t):
+    """savestate_fixes.yml EF80/D17C (tools/ssfix/dkc1_ef80.s): replays $0523 through $B99036."""
+    _dk_song_back_after_load(t, DKC1, "Donkey Kong Country (USA)", "DKC1.sfc", 0x7E0523, 0x0C, 0x00, 0x7E001C)
+
+
+def test_savestate_restores_the_song_dkc2(t):
+    """savestate_fixes.yml 1202/9860 (tools/ssfix/dkc2_1202.s): replays $1C through $B5800C."""
+    _dk_song_back_after_load(t, DKC2, "Donkey Kong Country 2 - Diddy's Kong Quest (USA) (En,Fr)", "DKC2.sfc",
+                             0x7E001C, 0x01, 0x06, 0x7E0020, mode_song=0x18)
+
