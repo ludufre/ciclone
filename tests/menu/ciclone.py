@@ -110,6 +110,10 @@ def _font_decode() -> dict[int, str]:
         # glyphs no char maps to (the onboarding tour's arrows and progress line): drawn,
         # not garbage
         dec.update({c: ch for c, (ch, _) in getattr(fontedit, "TOUR_GLYPHS", {}).items()})
+        # the browser's file-type icons (two glyphs ahead of each name) decode to nothing, so
+        # a row still reads as its name; tile_at() tells which icon a row shows
+        for _, (code, _) in getattr(fontedit, "BROWSER_ICONS", {}).items():
+            dec[code] = dec[code + 1] = ""
     except Exception:
         pass
     finally:
@@ -261,15 +265,19 @@ class Menu:
         self.frame = int(self._cmd(f"step {n}"))
         return self.frame
 
-    def hold(self, *btns: str):
+    def hold(self, *btns: str, pad: int = 1):
+        """Segura os botões no controle `pad` (1 ou 2); os do outro controle ficam como estão."""
         mask = 0
         for b in btns:
             mask |= 1 << BUTTONS[b]
+        if pad == 2:
+            self._cmd(f"buttons2 {mask:x}")
+            return
         self._held = mask
         self._cmd(f"buttons {mask:x}")
 
-    def release(self):
-        self.hold()
+    def release(self, pad: int = 1):
+        self.hold(pad=pad)
 
     def menu_combo(self) -> tuple[str, ...]:
         """The in-game menu combo the firmware armed for the loaded game -- what the window's
@@ -277,11 +285,11 @@ class Menu:
         mask = int(self._cmd("menumask"), 16)
         return tuple(b for b, i in BUTTONS.items() if mask >> i & 1)
 
-    def press(self, *btns: str, hold: int = 3, after: int = 3):
+    def press(self, *btns: str, hold: int = 3, after: int = 3, pad: int = 1):
         """Aperta e solta (o menu lê o pad no NMI; 3 quadros cobrem a borda de subida)."""
-        self.hold(*btns)
+        self.hold(*btns, pad=pad)
         self.step(hold)
-        self.release()
+        self.release(pad=pad)
         self.step(after)
 
     # -- memória
@@ -411,6 +419,13 @@ class Menu:
         raise MenuError(f"a tela não estabilizou em {frames} quadros\n{self.text()}")
 
     # -- browser
+    def tile_at(self, x: int, y: int) -> tuple[int, int]:
+        """(glyph code, print palette) of screen cell x, y, as screen() maps the hires cells."""
+        buf = self.wram(BG2_TILE_BUF if x % 2 == 0 else BG1_TILE_BUF, SCREEN_ROWS * 64)
+        off = y * 64 + (x & ~1)
+        word = buf[off] | (buf[off + 1] << 8)
+        return (word & 0x3FF) >> 1, (word >> 10) & 7
+
     def list_rows(self) -> list[str]:
         """Linhas do browser: entre o logo e a barra de status (as que não estão vazias)."""
         rows = self.screen()

@@ -48,6 +48,7 @@ static void vr(const uint16_t *data, unsigned width, unsigned height) {
 }
 static void ipoll(void) {}
 static int16_t g_buttons[16] = {0};   // estado dos botões (atualizado pelo SDL no modo --gui)
+static int16_t g_buttons2[16] = {0};  // controle 2 (só o protocolo --serve o aperta: "buttons2")
 // The in-game menu combo pressed by one key (the window's M, `MENU` in --keys): four buttons at
 // once on a keyboard often do not register (key rollover). Held for MENU_HOLD frames, then
 // released: the savestate handler opens the menu on the edge into "all held", but over SMW it
@@ -55,8 +56,9 @@ static int16_t g_buttons[16] = {0};   // estado dos botões (atualizado pelo SDL
 static uint16_t g_menu_mask = 0;
 static int g_menu_hold = 0;
 constexpr int MENU_HOLD = 20;
-static int16_t istate(bool, unsigned, unsigned, unsigned id) {
+static int16_t istate(bool port2, unsigned, unsigned, unsigned id) {
   if (id >= 16) return 0;
+  if (port2) return g_buttons2[id];   // a porta 2 é um controle à parte (antes espelhava a 1)
   return g_buttons[id] || (g_menu_hold > 0 && (g_menu_mask >> id & 1));
 }
 // The combo the firmware armed for the loaded game (MENU_COMBO $FF0704, SNES pad-register bit
@@ -323,6 +325,10 @@ static void serve_loop(ciclone::FpgaModel *m) {
     } else if (!strcmp(cmd, "buttons")) {
       unsigned mask = 0; sscanf(line + 7, "%x", &mask);
       for (int i = 0; i < 16; i++) g_buttons[i] = (mask >> i) & 1;
+      fprintf(g_proto, "ok\n");
+    } else if (!strcmp(cmd, "buttons2")) {
+      unsigned mask = 0; sscanf(line + 8, "%x", &mask);
+      for (int i = 0; i < 16; i++) g_buttons2[i] = (mask >> i) & 1;
       fprintf(g_proto, "ok\n");
     } else if (!strcmp(cmd, "peek")) {
       char space[16] = {0}; unsigned addr = 0, len = 0;

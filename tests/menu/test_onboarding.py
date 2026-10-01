@@ -59,10 +59,9 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 17
+NCARDS = 16
 MORE_CARD = 12      # "and more": the base tour's last card, 12 items (a list that scrolls)
-SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..17)
-BOOT_CARD = 17      # the power-on screen (a Yes/No card of the 2.17 section)
+SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..16)
 
 sys.path.insert(0, str(c.SD2SNES / "snes" / "utils"))
 import gen_onb_lang as onb  # noqa: E402  the tour's own strings (not in the menu dicts)
@@ -133,8 +132,8 @@ def test_tour_runs_and_returns_to_menu(t):
 
 def test_tour_answers_are_saved(t):
     """A list per card, the menu's bar on the focused answer: Up/Down move it (and stop
-    at the ends), A keeps the focused answer and goes on to the next card. Paging
-    with Right keeps the old value. The "all set" screen's A saves config.yml."""
+    at the ends), A keeps the focused answer and goes on to the next card. Going back
+    with Left keeps the old value. The "all set" screen's A saves config.yml."""
     sd = t.sd(config=FRESH + "ShowCovers: 1\nEnableMenuMusic: true\nMenuMusicRandom: true\n")
     m = t.menu(sd)
     _enter_tour(m)
@@ -161,8 +160,12 @@ def test_tour_answers_are_saved(t):
     m.step(30)
     m.press("DOWN")                        # menu sounds: moved but not kept...
     m.step(10)
-    m.press("RIGHT")                       # ...paging away leaves it as it was
-    m.wait_text(f"6/{NCARDS - 1}")
+    m.press("LEFT")                        # ...going back leaves it as it was
+    m.wait_text(f"4/{NCARDS - 1}")
+    m.step(30)
+    m.press("RIGHT")                       # the bar sits on the kept answers again
+    m.wait_text(f"5/{NCARDS - 1}")
+    m.step(30)
     for _ in range(NCARDS):                # Right past the last card
         if m.has(otr("onb_ui_done_title")):
             break
@@ -261,8 +264,7 @@ def test_tour_and_more_card(t):
 
 def test_tour_217_section(t):
     """After the base tour, a card opens the 2.17 section, then the release's cards:
-    controller 2, Game Boy Color, the in-game shortcut list, the power-on screen; then
-    "all set"."""
+    controller 2, Game Boy Color, the in-game shortcut list; then "all set"."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     _goto_card(m, SECTION_CARD)
@@ -278,19 +280,15 @@ def test_tour_217_section(t):
 
 
 
-def test_tour_power_on_screen_card(t):
-    """The power-on screen card writes BootIntro. The card test boots with the screen on:
-    it plays before the tour question, and not again when the tour hands back to the menu
-    (a menu reload is not a power-on)."""
+def test_tour_leaves_the_power_on_screen_alone(t):
+    """The power-on screen is not a tour card (only the settings turn it off): walking the
+    whole tour keeps BootIntro as it was, and the screen does not play again when the tour
+    hands back to the menu (a menu reload is not a power-on)."""
     sd = t.sd(config=FRESH + "BootIntro: true\n")
     m = t.menu(sd)
     _enter_tour(m)
-    _goto_card(m, BOOT_CARD)
-    assert m.has(otr(f"onb_f{BOOT_CARD}_name")), m.text()
-    assert m.has(para(BOOT_CARD)), m.text()
-    m.press("DOWN")                        # Yes -> No
-    m.step(10)
-    m.press("A")                           # keep No: the last card, so "all set"
+    _goto_card(m, NCARDS)
+    m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
     m.step(30)
     m.press("A")
@@ -298,7 +296,7 @@ def test_tour_power_on_screen_card(t):
     _back_to_menu(m)
     assert m.frame - start < 200, m.frame - start
     m.close()
-    assert "BootIntro: false" in _cfg(t, sd), _cfg(t, sd)
+    assert "BootIntro: true" in _cfg(t, sd), _cfg(t, sd)
 
 # the menu's silent S-DSP stub (snes/sfxdsp.i65), as the APU holds it at $0200: with the
 # music off the S-SMP runs it (the console gates the cart's MSU-1 DAC otherwise)
@@ -388,13 +386,13 @@ def test_tour_sounds_card_previews_and_undoes(t):
     m.press("UP")                              # Yes: the preview
     m.wait(lambda: _sfx_count(m, n) > 0, what="a previa do som")
     m.step(40)
-    m.press("RIGHT")                           # left without A
-    m.wait_text(f"7/{NCARDS}")
+    m.press("LEFT")                            # left without answering
+    m.wait_text(f"5/{NCARDS}")
     m.step(40)
     k = len(m.fwlog())
     m.press("DOWN")
     m.step(40)
-    m.press("RIGHT")
+    m.press("LEFT")
     m.step(60)
     assert _sfx_count(m, k) == 0, m.fwlog()[k:]
     m.press("START")
@@ -418,8 +416,28 @@ def test_tour_music_comes_back_when_its_card_is_left(t):
     m.step(30)
     after = lambda: tour_log().split("RESET requested by SNES")[-1].count("cmd: 30")
     before = after()
-    m.press("RIGHT")                           # left without A
+    m.press("LEFT")                            # left without answering
     m.wait(lambda: after() > before, frames=600, what="a musica de volta")
+
+
+def test_tour_right_keeps_the_focused_answer(t):
+    """Right keeps the focused answer like A: the bar on "No" over the music card and
+    Right leads past the random music card (it depends on the music) to the sounds card,
+    and the music stays off."""
+    sd = t.sd(config=FRESH + "EnableMenuMusic: true\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, 4)
+    m.press("DOWN")                        # Yes -> No
+    m.step(10)
+    m.press("RIGHT")
+    m.wait_text(f"5/{NCARDS - 1}")         # the menu sounds card, random music left out
+    assert m.has(otr("onb_f6_name")), m.text()
+    m.step(30)
+    m.press("START")
+    _back_to_menu(m)
+    m.close()
+    assert "EnableMenuMusic: false" in _cfg(t, sd), _cfg(t, sd)
 
 
 def test_tour_language_card_switches_live(t):
@@ -642,3 +660,36 @@ def test_tour_end_keeps_the_menu_music(t):
     assert m.peek("snescmd", 0x3E1, 1)[0] == 0, "MENU_HANDOFF not consumed"
     m.close()
     assert SEEN in _cfg(t, sd)
+
+
+def test_tour_on_controller_2(t):
+    """The whole tour on CONTROLLER 2 only, like the menu (read_pad merges both pads): the
+    gate, skipping the welcome clip, paging the cards and answering one. Controller 1 stays
+    idle throughout."""
+    sd = t.sd(config=FRESH + "ShowCovers: 1\n", misc=True)
+    m = t.menu(sd)
+    m.wait_text(c.encode_menu_text(c.tr("text_onbg_question")))
+    m.press("A", pad=2)                            # gate: yes
+    m.wait(lambda: _wel(m, "onb_wel_on") == 1, frames=1500, what="o clipe tocando")
+    m.step(20)
+    m.press("B", pad=2)                            # skip the clip
+    m.wait(lambda: _wel(m, "onb_wel_on") == 0, frames=120, what="o clipe pulado")
+    m.wait(lambda: m.has(f"1/{NCARDS}"), frames=900, what="o primeiro card")
+    m.step(30)
+    for _ in range(6):                             # page to card 2 (box art); like _goto_card,
+        if m.has(f"2/{NCARDS}"):                   # a press right after the fade can be lost
+            break
+        m.press("RIGHT", pad=2)
+        m.step(40)
+    assert m.has(f"2/{NCARDS}"), m.text()
+    m.step(30)
+    m.press("DOWN", pad=2)                         # Large -> Small
+    m.step(10)
+    m.press("A", pad=2)                            # keep it
+    m.wait_text(f"3/{NCARDS}")
+    m.step(30)
+    m.press("START", pad=2)                        # end the tour
+    _back_to_menu(m)
+    m.close()
+    cfg = _cfg(t, sd)
+    assert "ShowCovers: 2" in cfg and SEEN in cfg, cfg

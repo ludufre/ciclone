@@ -53,9 +53,10 @@ class T:
         """Imagem do cartão só deste teste (clone APFS de um template em cache)."""
         h = hashlib.sha1()
         h.update((c.MENU_DIR / "m3nu.bin").read_bytes())
-        onb = c.MENU_DIR / "onboarding.bin"
-        if onb.exists():
-            h.update(onb.read_bytes())
+        for extra_bin in ("onboarding.bin", "igmenu.bin"):     # both go on every card, so both
+            f = c.MENU_DIR / extra_bin                          # key the template cache
+            if f.exists():
+                h.update(f.read_bytes())
         if misc:
             for f in sorted((c.SD2SNES / "misc").glob("*")):
                 if f.is_file():
