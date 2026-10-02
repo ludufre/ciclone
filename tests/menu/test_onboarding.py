@@ -59,9 +59,9 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 16
+NCARDS = 20
 MORE_CARD = 12      # "and more": the base tour's last card, 12 items (a list that scrolls)
-SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..16)
+SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..20)
 
 sys.path.insert(0, str(c.SD2SNES / "snes" / "utils"))
 import gen_onb_lang as onb  # noqa: E402  the tour's own strings (not in the menu dicts)
@@ -264,7 +264,8 @@ def test_tour_and_more_card(t):
 
 def test_tour_217_section(t):
     """After the base tour, a card opens the 2.17 section, then the release's cards:
-    controller 2, Game Boy Color, the in-game shortcut list; then "all set"."""
+    controller 2, Game Boy Color, the in-game shortcut list, the community cartridges,
+    the browser icons, cheats from the game info card; then "all set"."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     _goto_card(m, SECTION_CARD)
@@ -279,8 +280,21 @@ def test_tour_217_section(t):
     m.wait_text(otr("onb_ui_done_title"))
 
 
+def test_tour_217_credits(t):
+    """The two community cartridge cards name who made the cores, in every language's
+    paragraph and on the screen."""
+    for n, who in ((17, "M2M"), (18, "terminator2k2")):
+        for k in range(len(onb.LANGS)):
+            assert any(who in line for line in onb.STRINGS["onb_f%d_text" % n][k]), (n, k)
+    m = t.menu(t.sd(config=FRESH))
+    _enter_tour(m)
+    for n, who in ((17, "M2M"), (18, "terminator2k2")):
+        _goto_card(m, n)
+        line = next(i for i, l in enumerate(onb.STRINGS["onb_f%d_text" % n][0]) if who in l)
+        m.wait_text(para(n, line=line))
+        m.step(30)
 
-def test_tour_leaves_the_power_on_screen_alone(t):
+
     """The power-on screen is not a tour card (only the settings turn it off): walking the
     whole tour keeps BootIntro as it was, and the screen does not play again when the tour
     hands back to the menu (a menu reload is not a power-on)."""
