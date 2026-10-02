@@ -81,6 +81,8 @@ def test_console_rom_larger_than_its_player_keeps_the_player_size(t):
     big = bytes((i * 11 + 1) & 0xFF for i in range(512 * 1024))
     sd = t.sd(extra={"/Big.sms": big, "/sd2snes/fpga_sms.bi3": CORE, "/sd2snes/sms_snes.bin": PLAYER})
     m = _load(t, sd, "Big.sms")
+    m.wait_text(c.tr("text_exp_warn1"), frames=1800)   # experimental core: confirm first
+    m.press("A")
     _booted(m)
     assert "rommask=1ffff" in m.fwlog(), m.fwlog()[-2000:]
     m.close()

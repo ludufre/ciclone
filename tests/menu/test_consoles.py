@@ -44,14 +44,27 @@ def _load(t, sd, name):
     return m
 
 
-def _booted(m):
+def _warned(m):
+    """Core experimental: depois do pré-check o firmware pergunta e o menu mostra o aviso
+    (Sim pré-selecionado)."""
+    m.wait_text(c.tr("text_exp_warn1"), frames=1800)
+    assert m.has(c.tr("text_exp_warn2"))
+    assert "experimental core: asking the menu" in m.fwlog()
+
+
+def _booted(m, experimental=True):
+    if experimental:
+        _warned(m)
+        m.press("A")
     m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="o boot")
 
 
 def _refused(m, missing):
-    """Pré-check: o popup cita o arquivo que falta e o menu continua (sem boot)."""
+    """Pré-check: o popup cita o arquivo que falta e o menu continua (sem boot). O aviso de core
+    experimental só vem depois de TODO o pré-check, então um arquivo faltando nunca o mostra."""
     m.wait_text(missing, frames=1200)
     assert "going to snes main loop" not in m.fwlog()
+    assert "experimental core: asking" not in m.fwlog()
     m.press("B")
     m.settle()
     m.close()
@@ -63,6 +76,21 @@ def test_nes_stages_prg_and_chr(t):
     _booted(m)
     assert m.psram(0x000000, 64) == PRG[:64], m.fwlog()[-2000:]      # NES_PSRAM_PRG_ADDR
     assert m.psram(0x200000, 64) == CHR[:64]                          # NES_PSRAM_CHR_ADDR
+    m.close()
+
+
+def test_experimental_warning_back_returns_to_the_browser(t):
+    """B no aviso: nada boota, o firmware recusa a carga sem popup de erro e o navegador volta."""
+    sd = t.sd(extra={"/Game.sms": SMS, "/sd2snes/fpga_sms.bi3": CORE, "/sd2snes/sms_snes.bin": PLAYER})
+    m = _load(t, sd, "Game.sms")
+    _warned(m)
+    m.press("B")
+    m.wait(lambda: "experimental core: answer 2" in m.fwlog(), frames=600, what="a resposta")
+    m.wait(lambda: m.has("Game.sms") and not m.has(c.tr("text_exp_warn1")), frames=600, what="o navegador")
+    m.step(120)
+    assert "going to snes main loop" not in m.fwlog()
+    assert not m.has(c.tr("text_err_generic"))
+    assert m.psram(0xFF07E6, 1) == b"\x00", "the question is still up"
     m.close()
 
 
@@ -102,7 +130,7 @@ def test_gb_boots_on_the_sgb(t):
     sd = t.sd(extra={"/Game.gb": _gb(), "/sd2snes/fpga_sgb.bi3": CORE,
                      "/sd2snes/sgb2_boot.bin": bytes(256), "/sd2snes/sgb2_snes.bin": PLAYER})
     m = _load(t, sd, "Game.gb")
-    _booted(m)
+    _booted(m, experimental=False)                 # the Super Game Boy is not experimental
     assert "attempting to load SGB boot ROM /sd2snes/sgb2_boot.bin" in m.fwlog(), m.fwlog()[-2000:]
     m.close()
 
@@ -143,7 +171,7 @@ def test_sufami_turbo_with_slot_b(t):
         m.step(10)
     assert "Beta" in m.bar_row(), m.text()
     m.press("A")
-    _booted(m)
+    _booted(m, experimental=False)
     assert m.psram(0x000000, 64) == PLAYER[:64]                       # SUFAMI_SLOTA_BIOS_ADDR
     assert m.psram(0x100000, 64) == a[:64]                            # SUFAMI_SLOTA_ROM_ADDR
     assert m.psram(0x700000, 64) == b[:64], m.fwlog()[-2000:]         # SUFAMI_SLOTB_ROM_ADDR
@@ -190,7 +218,7 @@ def test_spc7110_with_rtc(t):
     no relógio do console -- o caminho que um core sem a bateria pega."""
     sd = t.sd(extra={"/Rtc.sfc": _spc7110(0xF9), "/sd2snes/fpga_spc7110.bi3": CORE})
     m = _load(t, sd, "Rtc.sfc")
-    _booted(m)
+    _booted(m, experimental=False)
     assert "SPC7110 RTC:" in m.fwlog(), m.fwlog()[-2000:]
     m.close()
 
