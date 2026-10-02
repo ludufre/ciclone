@@ -71,3 +71,14 @@ def test_msu_folder_icon_follows_the_option(t):
     m.settle()
     y = m.row_of("MSU Game/")
     assert m.tile_at(COL, y) == (ICON["folder"], 1), m.tile_at(COL, y)
+
+
+def test_msu_folder_keeps_the_plain_dir_mark(t):
+    """The firmware marks a folder that opens as its game inside the entry's size string. The
+    size column still has to read like any other folder's."""
+    m = t.menu(t.sd())
+    m.wait(lambda: m.has("Test Game.sfc"), what="a lista")
+    m.settle()
+    rows = {name: m.screen()[m.row_of(name)].rstrip() for name in ("MSU Game/", "Two Games/")}
+    for name, row in rows.items():
+        assert row.endswith(" <dir>"), (name, row)
