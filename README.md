@@ -224,7 +224,8 @@ every card) patches that per game, keyed by the ROM header checksum, with code t
 after every save and load. Most entries copy one byte (a WRAM echo counter <- the live `$214x` port); some
 games need code. `tools/ssfix/smw_a0da.s` (Super Mario World: re-upload the music bank of the loaded
 area) and `tools/ssfix/dkc3_b28c.s` / `dkc2_1202.s` / `dkc1_ef80.s` (Donkey Kong Country 3/2/1: replay the loaded
-scene's song) were found
+scene's song) and `tools/ssfix/ki_45c0.s` / `ki_757a.s` / `ki_850a.s` (Killer Instinct: settle the command
+counter and ask the game's own NMI to upload the loaded scene's song again) were found
 and verified with the tools below - the same loop works for any game:
 
 1. **Reproduce and trace.** Run the case with the APU ports traced and the sound level logged:

@@ -13,6 +13,9 @@ SMW = 0xB19ED489    # Super Mario World (USA): LoROM, 512 KB, no coprocessor
 DKC3 = 0x448EEC19   # Donkey Kong Country 3 (USA) (En,Fr): HiROM, 4 MB, no coprocessor
 DKC1 = 0xC946DCA0   # Donkey Kong Country (USA) v1.0
 DKC2 = 0x006364DB   # Donkey Kong Country 2 - Diddy's Kong Quest (USA) (En,Fr) v1.0
+KI = 0x252C1DA7     # Killer Instinct (USA): HiROM, 4 MB, no coprocessor
+KI_R1 = 0x09E9A04E  # Killer Instinct (USA) (Rev 1)
+KI_EU = 0x3D7252D4  # Killer Instinct (Europe)
 
 SMW_MODE = 0x7E0100       # game mode: $07 title, $08 file select, $0E overworld, $14 level
 SMW_MARIO_X = 0x7E0094
@@ -296,3 +299,80 @@ def test_savestate_restores_the_song_dkc2(t):
     _dk_song_back_after_load(t, DKC2, "Donkey Kong Country 2 - Diddy's Kong Quest (USA) (En,Fr)", "DKC2.sfc",
                              0x7E001C, 0x01, 0x06, 0x7E0020, mode_song=0x18)
 
+
+
+def _ki_boot(t, sd):
+    m = t.menu(sd)
+    m.goto("KI.sfc")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game card")
+    m.press("A")                                        # Play
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="the ROM boot")
+    m.step(600)
+    return m
+
+
+def _ki_song_back_after_load(t, crc, what, song_at, pending_at, echo_at):
+    """Save in the first fight, load from the title screen of another session (the APU holds the
+    title song): the fix must put the fight's song back in the APU, and the game must keep answering
+    START -- pause and unpause both send a command, and a command nobody answers hangs the game.
+    song_at: the song the game believes the APU holds; pending_at: the song its NMI epilogue uploads
+    next; echo_at: the command counter it waits for on $2140."""
+    sd = t.sd(extra={"/KI.sfc": c.game_rom(crc, what)})
+    m = _ki_boot(t, sd)
+    song = lambda: m.u16(song_at)                       # noqa: E731
+    seen = [song()]                                     # title, then the menus, then the fight
+    for _ in range(12):
+        if len(seen) == 3:
+            break
+        m.press("START", hold=6, after=240)
+        if song() != seen[-1]:
+            seen.append(song())
+    assert len(seen) == 3, f"never reached a fight: songs {seen}"
+    m.step(600)
+    fight = m.aram()
+    m.step(60)
+    noise = m.volatile(fight, m.aram())
+    m.hold("START", "R")                                # the default save combo (START also pauses)
+    m.step(20)
+    m.release()
+    m.wait(lambda: "KI01.state, 0a" in m.fwlog(), frames=900, what="the state file")
+    m.step(60)
+    m.close()
+
+    m = _ki_boot(t, sd)                                 # another session: the APU holds the title song
+    song = lambda: m.u16(song_at)                       # noqa: E731
+    assert song() == seen[0], f"not on the title screen: song {song():04x}"
+    title = m.aram()
+    for _ in range(4):                                  # START moves the title on; the load lands
+        m.hold("START", "L")                            # once the game's own song upload lets the
+        m.step(20)                                      # hook in again
+        m.release()
+        m.step(300)
+        if song() == seen[2]:
+            break
+    assert song() == seen[2], "the load did not happen"
+    m.step(300)
+    assert m.u16(pending_at) == 0, "the song upload is still pending"
+    n, frac = m.load_match(m.aram(), title, fight, noise)
+    assert n > 2000 and frac > 0.85, f"the load rewrote {n} ARAM bytes, {frac:.0%} of them the fight's"
+    for i in range(6):                                  # unpause, pause, ... each one is a command
+        echo = m.u8(echo_at)
+        m.press("START", hold=6, after=120)
+        assert m.u8(echo_at) != echo, f"START #{i + 1} sent nothing: the game is stuck on the APU"
+
+
+def test_savestate_restores_the_song_ki(t):
+    """savestate_fixes.yml 45C0 (tools/ssfix/ki_45c0.s): the game tracks in WRAM which song and sample
+    pack the APU holds and sends every command with an untimed counter handshake."""
+    _ki_song_back_after_load(t, KI, "Killer Instinct (USA)", 0x7E17DA, 0x7E00AA, 0x7E17DC)
+
+
+def test_savestate_restores_the_song_ki_rev1(t):
+    """savestate_fixes.yml 757A (tools/ssfix/ki_757a.s): the same driver, variables two bytes up."""
+    _ki_song_back_after_load(t, KI_R1, "Killer Instinct (USA) (Rev 1)", 0x7E17DC, 0x7E00AA, 0x7E17DE)
+
+
+def test_savestate_restores_the_song_ki_europe(t):
+    """savestate_fixes.yml 850A (tools/ssfix/ki_850a.s): the same driver, pending song at $AB."""
+    _ki_song_back_after_load(t, KI_EU, "Killer Instinct (Europe)", 0x7E17DC, 0x7E00AB, 0x7E17DE)
