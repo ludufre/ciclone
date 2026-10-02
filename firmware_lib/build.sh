@@ -46,7 +46,7 @@ mkdir -p "$STAGE" "$OBJ"
 # printf.c (clashes with libc stdio). Those are replaced by hal_host/*.
 FW_SRCS=(
   main.c menucmd.c
-  snes.c memory.c smc.c psram_io.c
+  snes.c memory.c smc.c bootleg.c psram_io.c
   fpga_spi.c
   fileops.c ff.c ccsbcs.c strutil.c scratch.c
   filetypes.c sort.c
