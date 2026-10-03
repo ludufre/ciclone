@@ -59,9 +59,9 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 20
-MORE_CARD = 12      # "and more": the base tour's last card, 12 items (a list that scrolls)
-SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..20)
+NCARDS = 19
+MORE_CARD = 11      # "and more": the base tour's last card, 12 items (a list that scrolls)
+SECTION_CARD = 12   # the 2.17 section's opening card, then the release's cards (13..19)
 
 sys.path.insert(0, str(c.SD2SNES / "snes" / "utils"))
 import gen_onb_lang as onb  # noqa: E402  the tour's own strings (not in the menu dicts)
@@ -182,28 +182,21 @@ def test_tour_answers_are_saved(t):
         assert want in cfg, (want, cfg)
 
 
-def test_tour_guides_card_follows_the_ingame_menu(t):
-    """Guides live inside the in-game menu: with the in-game menu card answered No the
-    guides card is left out, going forward and coming back."""
-    m = t.menu(t.sd(config=FRESH + "EnableMenuMusic: true\nEnableCheatOverlay: true\n"))
+def test_tour_has_no_guides_card(t):
+    """The guides are always on with the in-game menu: no tour card asks about them, and the
+    in-game menu card is followed by the savestates card."""
+    assert not any("Guides" in onb.STRINGS["onb_f%d_name" % n][0] for n in range(1, NCARDS + 1))
+    m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
-    _goto_card(m, 7)                       # in-game menu: Yes / No, bar on Yes
+    _goto_card(m, 7)
     assert m.has(otr("onb_f7_name")), m.text()
-    m.press("DOWN")
-    m.step(10)
-    m.press("A")                           # No -> savestates, 8 of 12
-    m.wait_text(f"8/{NCARDS - 1}")
+    m.press("A")
+    m.wait_text(f"8/{NCARDS}")
     assert m.has(otr("onb_f8_name")), m.text()
     m.step(30)
-    m.press("RIGHT")                       # guides (card 9) is left out
-    m.wait_text(f"9/{NCARDS - 1}")
-    assert m.has(otr("onb_f10_name")), m.text()
-    assert not m.has(otr("onb_f9_name")), m.text()
-    m.step(30)
-    m.press("LEFT")                        # and back skips it too
-    m.wait_text(f"8/{NCARDS - 1}")
-    assert m.has(otr("onb_f8_name")), m.text()
-
+    m.press("A")
+    m.wait_text(f"9/{NCARDS}")
+    m.close()
 
 def test_tour_demo_follows_the_focus(t):
     """The demo picture streams into the hidden VRAM slot and the 16 sprites swap to
@@ -283,12 +276,12 @@ def test_tour_217_section(t):
 def test_tour_217_credits(t):
     """The two community cartridge cards name who made the cores, in every language's
     paragraph and on the screen."""
-    for n, who in ((17, "M2M"), (18, "terminator2k2")):
+    for n, who in ((16, "M2M"), (17, "terminator2k2")):
         for k in range(len(onb.LANGS)):
             assert any(who in line for line in onb.STRINGS["onb_f%d_text" % n][k]), (n, k)
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
-    for n, who in ((17, "M2M"), (18, "terminator2k2")):
+    for n, who in ((16, "M2M"), (17, "terminator2k2")):
         _goto_card(m, n)
         line = next(i for i, l in enumerate(onb.STRINGS["onb_f%d_text" % n][0]) if who in l)
         m.wait_text(para(n, line=line))
