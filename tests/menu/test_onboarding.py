@@ -75,7 +75,8 @@ def otr(label, lang="en"):
 
 def para(n, lang="en", line=0):
     """A line of card n's paragraph (gen_onb_lang.py wraps it) as the screen decodes it."""
-    return c.encode_menu_text(onb.STRINGS["onb_f%d_text" % n][onb.LANGS.index(lang)][line])
+    raw = onb.STRINGS["onb_f%d_text" % n][onb.LANGS.index(lang)][line]
+    return c.encode_menu_text(raw.replace("[", "").replace("]", ""))   # button markup draws nothing
 
 
 def _enter_tour(m, lang="en"):
@@ -307,6 +308,36 @@ def test_tour_done_screen_key_is_green(t):
         assert m.tile_at(x0 + k, row)[1] == 2, (lang, m.tile_at(x0 + k, row))
         other = next(i for i, ch in enumerate(line) if ch not in " A")
         assert m.tile_at(x0 + other, row)[1] == 0, (lang, other)
+        m.close()
+
+
+def test_tour_buttons_in_the_text_are_green(t):
+    """A button named in a card's paragraph is green like the key hints, the '+' between
+    two of them is not: L+R+Y+Left on the in-game menu card, in English and Portuguese."""
+    for lang, idx in (("en", 0), ("ptbr", 1)):
+        m = t.menu(t.sd(config=FRESH + "Language: %d\n" % idx))
+        _enter_tour(m, lang)
+        _goto_card(m, 7)
+        m.step(30)
+        lines = onb.STRINGS["onb_f7_text"][onb.LANGS.index(lang)]
+        k = next(i for i, l in enumerate(lines) if "[L]+[R]" in l)
+        raw = lines[k]
+        plain = raw.replace("[", "").replace("]", "")
+        row = m.row_of(c.encode_menu_text(plain))
+        assert row is not None, m.text()
+        x0 = m.screen()[row].index(c.encode_menu_text(plain))
+        col, green, x = {}, False, 0
+        for ch in raw:                     # expected colour of every printed cell
+            if ch in "[]":
+                green = not green
+                continue
+            col[x] = green
+            x += 1
+        for i, want in col.items():
+            if plain[i] == " ":
+                continue
+            pal = m.tile_at(x0 + i, row)[1]
+            assert (pal == 2) == want, (lang, plain, i, plain[i], pal)
         m.close()
 
 
