@@ -302,3 +302,30 @@ def test_gbc_routes_to_the_gbc_core(t):
 def test_gbc_without_the_player_is_refused(t):
     m = _load(t, t.sd(extra={"/Game.gbc": _gbc(), "/sd2snes/fpga_gbc.bi3": CORE}), "Game.gbc")
     _refused(m, "gbc_snes.bin")
+
+
+def test_nes_without_its_core_is_refused(t):
+    m = _load(t, t.sd(extra={"/Game.nes": NES, "/sd2snes/nes_snes.bin": PLAYER}), "Game.nes")
+    _refused(m, "fpga_nes.bi3")
+
+
+def test_sms_without_its_core_is_refused(t):
+    m = _load(t, t.sd(extra={"/Game.sms": SMS, "/sd2snes/sms_snes.bin": PLAYER}), "Game.sms")
+    _refused(m, "fpga_sms.bi3")
+
+
+def test_a26_without_its_core_is_refused(t):
+    m = _load(t, t.sd(extra={"/Game.a26": A26, "/sd2snes/a26_snes.bin": PLAYER}), "Game.a26")
+    _refused(m, "fpga_a26.bi3")
+
+
+def test_gbc_without_its_core_is_refused(t):
+    sd = t.sd(extra={"/Game.gbc": _gbc(), "/sd2snes/gbc_snes.bin": PLAYER,
+                     "/sd2snes/cgb_boot.bin": _cgb_boot()})
+    _refused(_load(t, sd, "Game.gbc"), "fpga_gbc.bi3")
+
+
+def test_gbc_without_the_boot_rom_is_refused(t):
+    sd = t.sd(extra={"/Game.gbc": _gbc(), "/sd2snes/fpga_gbc.bi3": CORE,
+                     "/sd2snes/gbc_snes.bin": PLAYER})
+    _refused(_load(t, sd, "Game.gbc"), "cgb_boot.bin")

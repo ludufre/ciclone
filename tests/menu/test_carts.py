@@ -105,6 +105,12 @@ def test_st018_without_the_chip_firmware_is_refused(t):
     _refused(_load(t, sd, "Shogi 2.sfc"), "st018.rom")
 
 
+def test_st018_without_its_core_is_refused(t):
+    rom = lorom("CICLONE ST018", chipset=0xF5, mapmode=0x30)
+    sd = t.sd(extra={"/Shogi 2.sfc": rom, "/sd2snes/st018.rom": b"\0" * 163840})
+    _refused(_load(t, sd, "Shogi 2.sfc"), "fpga_st0018.bi3")
+
+
 def test_20_in_1_multicart_is_detected_by_its_bank_6_header(t):
     """1 MB sem cabeçalho válido no banco 0: o firmware reconhece o cartucho pelo cabeçalho do
     banco 6 e pede o core dele (ausente no cartão = popup com o nome do arquivo)."""
