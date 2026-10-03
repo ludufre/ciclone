@@ -45,10 +45,15 @@ def _load(t, sd, name):
 
 
 def _warned(m):
-    """Core experimental: depois do pré-check o firmware pergunta e o menu mostra o aviso
-    (Sim pré-selecionado)."""
-    m.wait_text(c.tr("text_exp_warn1"), frames=1800)
-    assert m.has(c.tr("text_exp_warn2"))
+    """Core experimental: depois do pré-check o firmware pergunta e o menu mostra o aviso, com
+    o título (os '*' do rótulo só marcam a palavra verde), as linhas do texto e as 3 opções;
+    Iniciar vem com a barra."""
+    m.wait_text(c.tr("text_exp_l1"), frames=1800)
+    title = c.tr("text_exp_title").replace("*", "")
+    assert m.has(title), m.text()
+    for label in ("text_exp_l2", "text_exp_l4", "text_exp_l5", "text_exp_start", "text_exp_back",
+                  "text_exp_nowarn"):
+        assert m.has(c.tr(label)), (label, m.text())
     assert "experimental core: asking the menu" in m.fwlog()
 
 
@@ -86,11 +91,52 @@ def test_experimental_warning_back_returns_to_the_browser(t):
     _warned(m)
     m.press("B")
     m.wait(lambda: "experimental core: answer 2" in m.fwlog(), frames=600, what="a resposta")
-    m.wait(lambda: m.has("Game.sms") and not m.has(c.tr("text_exp_warn1")), frames=600, what="o navegador")
+    m.wait(lambda: m.has("Game.sms") and not m.has(c.tr("text_exp_l1")), frames=600, what="o navegador")
     m.step(120)
     assert "going to snes main loop" not in m.fwlog()
     assert not m.has(c.tr("text_err_generic"))
     assert m.psram(0xFF07E6, 1) == b"\x00", "the question is still up"
+    m.close()
+
+
+def test_experimental_warning_back_option(t):
+    """A opção Voltar (a do meio) faz o mesmo que o B."""
+    sd = t.sd(extra={"/Game.sms": SMS, "/sd2snes/fpga_sms.bi3": CORE, "/sd2snes/sms_snes.bin": PLAYER})
+    m = _load(t, sd, "Game.sms")
+    _warned(m)
+    m.press("DOWN")
+    m.step(10)
+    m.press("A")
+    m.wait(lambda: "experimental core: answer 2" in m.fwlog(), frames=600, what="a resposta")
+    m.wait(lambda: m.has("Game.sms") and not m.has(c.tr("text_exp_l1")), frames=600, what="o navegador")
+    assert "going to snes main loop" not in m.fwlog()
+    m.close()
+
+
+def test_experimental_warning_dont_warn_again(t):
+    """A terceira opção inicia o jogo e grava WarnExperimental: false no config.yml."""
+    sd = t.sd(extra={"/Game.nes": NES, "/sd2snes/fpga_nes.bi3": CORE, "/sd2snes/nes_snes.bin": PLAYER})
+    m = _load(t, sd, "Game.nes")
+    _warned(m)
+    m.press("DOWN")
+    m.step(10)
+    m.press("DOWN")
+    m.step(10)
+    m.press("A")
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="o boot")
+    assert "experimental core: answer 3" in m.fwlog()
+    m.close()
+    cfg = t.read(sd, "/sd2snes/config.yml").decode()
+    assert "WarnExperimental: false" in cfg, cfg
+
+
+def test_experimental_warning_off_starts_directly(t):
+    """Com WarnExperimental desligado o firmware nem pergunta."""
+    sd = t.sd(config="---\nWarnExperimental: false\n",
+              extra={"/Game.nes": NES, "/sd2snes/fpga_nes.bi3": CORE, "/sd2snes/nes_snes.bin": PLAYER})
+    m = _load(t, sd, "Game.nes")
+    _booted(m, experimental=False)
+    assert "experimental core: asking" not in m.fwlog()
     m.close()
 
 
