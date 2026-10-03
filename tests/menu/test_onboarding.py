@@ -273,6 +273,22 @@ def test_tour_217_section(t):
     m.wait_text(otr("onb_ui_done_title"))
 
 
+def test_tour_footer_is_left_aligned(t):
+    """The key hints start at the left edge on every card: a card with nothing to choose
+    drops the up/down hint and the others move into its place (no hole at the start)."""
+    m = t.menu(t.sd(config=FRESH))
+    _enter_tour(m)
+    nxt = c.encode_menu_text(onb.STRINGS["onb_ui_next"][0])
+    for n in (2, SECTION_CARD):            # a card with answers, an info-only card
+        _goto_card(m, n)
+        m.step(30)
+        foot = m.screen()[27]
+        assert nxt in foot, (n, foot)
+        assert foot[:2].strip(), (n, foot)  # something at columns 0..1
+        m.step(10)
+    m.close()
+
+
 def test_tour_217_credits(t):
     """The two community cartridge cards name who made the cores, in every language's
     paragraph and on the screen."""
