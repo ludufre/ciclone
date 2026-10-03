@@ -289,6 +289,27 @@ def test_tour_footer_is_left_aligned(t):
     m.close()
 
 
+def test_tour_done_screen_key_is_green(t):
+    """"PRESS A FOR THE MENU": the A is green like every key hint, the words are not --
+    in English and in German, where the line starts with the key."""
+    for lang, idx in (("en", 0), ("de", 3)):
+        m = t.menu(t.sd(config=FRESH + "Language: %d\n" % idx))
+        _enter_tour(m, lang)
+        _goto_card(m, NCARDS)
+        m.press("RIGHT")
+        m.wait_text(otr("onb_ui_done_title", lang))
+        m.step(30)
+        line = c.encode_menu_text(onb.STRINGS["onb_ui_done_go"][onb.LANGS.index(lang)])
+        row = m.row_of(line)
+        assert row is not None, m.text()
+        x0 = m.screen()[row].index(line)
+        k = line.index("A ") if line.startswith("A ") else line.index(" A") + 1
+        assert m.tile_at(x0 + k, row)[1] == 2, (lang, m.tile_at(x0 + k, row))
+        other = next(i for i, ch in enumerate(line) if ch not in " A")
+        assert m.tile_at(x0 + other, row)[1] == 0, (lang, other)
+        m.close()
+
+
 def test_tour_217_credits(t):
     """The two community cartridge cards name who made the cores, in every language's
     paragraph and on the screen."""
