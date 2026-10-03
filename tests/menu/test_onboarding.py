@@ -59,9 +59,9 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 21
+NCARDS = 20
 MORE_CARD = 12      # "and more": the base tour's last card, 12 items (a list that scrolls)
-SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..21)
+SECTION_CARD = 13   # the 2.17 section's opening card, then the release's cards (14..20)
 
 sys.path.insert(0, str(c.SD2SNES / "snes" / "utils"))
 import gen_onb_lang as onb  # noqa: E402  the tour's own strings (not in the menu dicts)
@@ -265,8 +265,7 @@ def test_tour_and_more_card(t):
 def test_tour_217_section(t):
     """After the base tour, a card opens the 2.17 section, then the release's cards:
     controller 2, Game Boy Color, the in-game shortcut list, the community cartridges,
-    the browser icons, cheats from the game info card, the experimental-core warning; then
-    "all set"."""
+    the browser icons, cheats from the game info card; then "all set"."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     _goto_card(m, SECTION_CARD)
@@ -279,25 +278,6 @@ def test_tour_217_section(t):
         m.step(30)
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
-
-
-def test_tour_experimental_warning_card(t):
-    """The experimental-core warning card is a Yes/No answer: "No" and A turn the
-    question off (WarnExperimental: false in config.yml)."""
-    sd = t.sd(config=FRESH)
-    m = t.menu(sd)
-    _enter_tour(m)
-    _goto_card(m, NCARDS)
-    assert m.has(otr(f"onb_f{NCARDS}_name")), m.text()
-    m.press("DOWN")                        # Yes -> No
-    m.step(10)
-    m.press("A")
-    m.wait_text(otr("onb_ui_done_title"))
-    m.step(30)
-    m.press("A")
-    _back_to_menu(m)
-    m.close()
-    assert "WarnExperimental: false" in _cfg(t, sd), _cfg(t, sd)
 
 
 def test_tour_217_credits(t):
