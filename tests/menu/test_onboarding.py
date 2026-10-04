@@ -59,9 +59,47 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 19
-MORE_CARD = 11      # "and more": the base tour's last card, 12 items (a list that scrolls)
-SECTION_CARD = 12   # the 2.17 section's opening card, then the release's cards (13..19)
+NCARDS = 40         # card descriptors (onb_feat_table); the header counts the ones shown
+MORE_CARD = 32      # "and more": the base tour's last card, 8 items
+SECTION_CARD = 33   # the 2.17 section's opening card, then the release's cards (34..40)
+MORE_ITEMS = 8
+# the cards by descriptor number (onb_fN_name)
+C_THEME, C_OUTLINE, C_AA, C_COVERS, C_COVLISTS, C_GI, C_VIDEO, C_CLIPMUSIC = 2, 3, 4, 5, 6, 7, 8, 9
+C_MUSIC, C_RANDOM, C_SFX, C_MSU, C_PCM, C_SD2SNESDIR, C_RESET, C_CHEATLIST = 10, 11, 12, 13, 14, 15, 16, 17
+C_IGM, C_STATES, C_SAVES, C_TRAINER, C_PATCHES, C_CREATEROM, C_CHIPS = 18, 19, 20, 21, 22, 23, 24
+C_SUFAMI, C_CCTIME, C_CONSOLES, C_ATARI, C_FOLDERS, C_MEMTEST, C_LED = 25, 26, 27, 28, 29, 30, 31
+C_PAD2, C_GBC, C_HOOKLIST, C_SETA, C_COL20, C_ICONS, C_GICHEATS = 34, 35, 36, 37, 38, 39, 40
+# Cards shown on one board only (ONB_FF_MK3ONLY / ONB_FF_MK2ONLY): the Ciclone is a Mk.III,
+# so the Mk.II's LED card is left out of every walk and of the header's count.
+MK3ONLY = (C_CONSOLES, C_ATARI, C_GBC)
+MK2ONLY = (C_LED,)
+# cards a parent's off answer leaves out
+NO_RANDOM = (C_RANDOM,)                  # menu music off
+NO_COVLISTS = (C_COVLISTS,)              # box art off
+NO_GI = (C_VIDEO, C_CLIPMUSIC)           # game info card off
+NO_VIDEO = (C_CLIPMUSIC,)                # its video off
+NO_IGM = (C_SAVES, C_TRAINER)            # in-game menu off
+
+
+def shown(skip=()):
+    """The descriptors the tour walks on the Mk.III, in order, minus `skip`."""
+    return [n for n in range(1, NCARDS + 1) if n not in MK2ONLY and n not in skip]
+
+
+def pos(n, skip=()):
+    return shown(skip).index(n) + 1
+
+
+def tot(skip=()):
+    return len(shown(skip))
+
+
+def hdr(n, skip=()):
+    """The header's "N/total" on card n."""
+    return f"{pos(n, skip)}/{tot(skip)}"
+
+
+TOTAL = tot()
 
 sys.path.insert(0, str(c.SD2SNES / "snes" / "utils"))
 import gen_onb_lang as onb  # noqa: E402  the tour's own strings (not in the menu dicts)
@@ -79,21 +117,24 @@ def para(n, lang="en", line=0):
     return c.encode_menu_text(raw.replace("[", "").replace("]", ""))   # button markup draws nothing
 
 
-def _enter_tour(m, lang="en"):
-    """Answer yes to the first-boot question and wait for the tour's first card."""
+def _enter_tour(m, lang="en", total=None):
+    """Answer yes to the first-boot question and wait for the tour's first card (total =
+    the cards the header counts, when the test leaves some out from the start)."""
     m.wait_text(c.encode_menu_text(c.tr("text_onbg_question", lang)))
     m.press("A")
     m.wait(lambda: "/sd2snes/onboarding.bin" in m.fwlog(), frames=900, what="a carga do tour")
     # the first card; "/12" when a card is left out (random music without music)
-    m.wait(lambda: m.has(f"1/{NCARDS}") or m.has(f"1/{NCARDS - 1}"), frames=1500,
+    m.wait(lambda: m.has(f"1/{total}") if total else (m.has(f"1/{TOTAL}") or m.has(f"1/{TOTAL - 1}")),
+           frames=1500,
            what="o primeiro card do tour")
     m.step(30)                             # the card fades in; a press during the ramp is lost
 
 
-def _goto_card(m, n):
-    """From a card before n (Right), until the header says n/NCARDS."""
+def _goto_card(m, n, skip=()):
+    """From a card before n (Right), until the header shows card n (`skip` = the cards
+    left out by the answers given)."""
     for _ in range(NCARDS + 2):
-        if m.has(f"{n}/{NCARDS}"):
+        if m.has(hdr(n, skip)):
             m.step(30)
             return
         m.press("RIGHT")
@@ -126,7 +167,7 @@ def test_tour_runs_and_returns_to_menu(t):
     _goto_card(m, 1)
     m.press("START")
     _back_to_menu(m)
-    assert not m.has(f"1/{NCARDS}"), m.text()
+    assert not m.has(hdr(1)), m.text()
     m.close()
     assert SEEN in _cfg(t, sd)
 
@@ -138,36 +179,36 @@ def test_tour_answers_are_saved(t):
     sd = t.sd(config=FRESH + "ShowCovers: 1\nEnableMenuMusic: true\nMenuMusicRandom: true\n")
     m = t.menu(sd)
     _enter_tour(m)
-    _goto_card(m, 2)                       # box art: Off / Large / Small, bar on Large
+    _goto_card(m, C_COVERS)                # box art: Off / Large / Small, bar on Large
     m.press("DOWN")                        # -> Small
     m.step(10)
     m.press("DOWN")                        # the last one: stays
     m.step(10)
     m.press("A")                           # keep Small, next card
-    m.wait_text(f"3/{NCARDS}")
-    _goto_card(m, 4)                       # menu music: Yes / No, bar on Yes
+    m.wait_text(hdr(C_COVLISTS))
+    _goto_card(m, C_MUSIC)                 # menu music: Yes / No, bar on Yes
     m.press("DOWN")
     m.step(10)
-    m.press("A")                           # keep No: random music (card 5) is left out
-    m.wait_text(f"5/{NCARDS - 1}")         # the menu sounds card, now 5 of 12
-    assert m.has(otr("onb_f6_name")), m.text()
+    m.press("A")                           # keep No: random music is left out
+    m.wait_text(hdr(C_SFX, NO_RANDOM))     # the menu sounds card takes its place
+    assert m.has(otr(f"onb_f{C_SFX}_name")), m.text()
     m.step(30)
     m.press("LEFT")                        # back skips it too
-    m.wait_text(f"4/{NCARDS - 1}")
-    assert m.has(otr("onb_f4_name")), m.text()
+    m.wait_text(hdr(C_MUSIC, NO_RANDOM))
+    assert m.has(otr(f"onb_f{C_MUSIC}_name")), m.text()
     m.step(30)
     m.press("RIGHT")
-    m.wait_text(f"5/{NCARDS - 1}")
+    m.wait_text(hdr(C_SFX, NO_RANDOM))
     m.step(30)
     m.press("DOWN")                        # menu sounds: moved but not kept...
     m.step(10)
     m.press("LEFT")                        # ...going back leaves it as it was
-    m.wait_text(f"4/{NCARDS - 1}")
+    m.wait_text(hdr(C_MUSIC, NO_RANDOM))
     m.step(30)
     m.press("RIGHT")                       # the bar sits on the kept answers again
-    m.wait_text(f"5/{NCARDS - 1}")
+    m.wait_text(hdr(C_SFX, NO_RANDOM))
     m.step(30)
-    for _ in range(NCARDS):                # Right past the last card
+    for _ in range(NCARDS + 2):            # Right past the last card
         if m.has(otr("onb_ui_done_title")):
             break
         m.press("RIGHT")
@@ -189,14 +230,14 @@ def test_tour_has_no_guides_card(t):
     assert not any("Guides" in onb.STRINGS["onb_f%d_name" % n][0] for n in range(1, NCARDS + 1))
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
-    _goto_card(m, 7)
-    assert m.has(otr("onb_f7_name")), m.text()
+    _goto_card(m, C_IGM)
+    assert m.has(otr(f"onb_f{C_IGM}_name")), m.text()
     m.press("A")
-    m.wait_text(f"8/{NCARDS}")
-    assert m.has(otr("onb_f8_name")), m.text()
+    m.wait_text(hdr(C_STATES))
+    assert m.has(otr(f"onb_f{C_STATES}_name")), m.text()
     m.step(30)
     m.press("A")
-    m.wait_text(f"9/{NCARDS}")
+    m.wait_text(hdr(C_SAVES))
     m.close()
 
 def test_tour_demo_follows_the_focus(t):
@@ -205,7 +246,7 @@ def test_tour_demo_follows_the_focus(t):
     palettes 0-3) to slot 1 (table 1, palettes 4-7), and back."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
-    _goto_card(m, 2)
+    _goto_card(m, C_COVERS)
     oam = m.peek("oam", 0, 4)
     slot = lambda: m.peek("oam", 0, 4)[3] & 0x01
     pal = lambda: m.peek("oam", 0, 4)[3] >> 1 & 7
@@ -233,27 +274,25 @@ def test_tour_language_card_flag_follows_the_focus(t):
 
 def test_tour_and_more_card(t):
     """The base tour's last card lists the info-only novelties; moving the bar shows
-    each one's text beside the list (and its demo). Twelve items do not fit: the list
-    scrolls with the bar down to the last one. A goes on to the 2.17 section."""
+    each one's text (and its demo). The eight items are all listed at once, no scroll bar.
+    A goes on to the 2.17 section."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     _goto_card(m, MORE_CARD)
     assert m.has(otr(f"onb_f{MORE_CARD}_name")), m.text()          # "And more"
     first = NCARDS + 1                                              # its items: after the cards
-    assert m.has(para(first)), m.text()                            # item 1's text (themes)
-    assert m.has(otr(f"onb_f{first}_name")), m.text()
-    last = first + 11
-    assert not m.has(otr(f"onb_f{last}_name")), m.text()           # below the box, for now
-    m.press("DOWN")
-    m.wait_text(para(first + 1))                                   # item 2 (cheats) beside the list
-    for _ in range(12):
+    last = first + MORE_ITEMS - 1
+    assert m.has(para(first)), m.text()                            # item 1's text
+    for n in range(first, last + 1):
+        assert m.has(otr(f"onb_f{n}_name")), (n, m.text())         # every item listed
+    assert not [r for r in range(28) if m.tile_at(29, r)[0] == 17], m.text()   # no thumb
+    for n in range(first + 1, last + 1):
         m.press("DOWN")
+        m.wait_text(para(n))                                       # its text
         m.step(12)
-    m.wait_text(para(last))                                        # the last item's text...
-    assert m.has(otr(f"onb_f{last}_name")), m.text()               # ...and the list scrolled to it
-    assert not m.has(otr(f"onb_f{first}_name")), m.text()
+    assert m.has(otr(f"onb_f{first}_name")), m.text()              # nothing scrolled away
     m.press("A")
-    m.wait_text(f"{SECTION_CARD}/{NCARDS}")
+    m.wait_text(hdr(SECTION_CARD))
 
 
 def test_tour_217_section(t):
@@ -265,9 +304,9 @@ def test_tour_217_section(t):
     _goto_card(m, SECTION_CARD)
     assert m.has(otr(f"onb_f{SECTION_CARD}_name")), m.text()      # "What's new in 2.17"
     assert m.has(para(SECTION_CARD)), m.text()
-    for n in range(SECTION_CARD + 1, NCARDS + 1):
+    for n in [k for k in shown() if k > SECTION_CARD]:
         m.press("RIGHT")
-        m.wait_text(f"{n}/{NCARDS}")
+        m.wait_text(hdr(n))
         assert m.has(otr(f"onb_f{n}_name")), (n, m.text())
         m.step(30)
     m.press("RIGHT")
@@ -280,7 +319,7 @@ def test_tour_footer_is_left_aligned(t):
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     nxt = c.encode_menu_text(onb.STRINGS["onb_ui_next"][0])
-    for n in (2, SECTION_CARD):            # a card with answers, an info-only card
+    for n in (C_COVERS, SECTION_CARD):     # a card with answers, an info-only card
         _goto_card(m, n)
         m.step(30)
         foot = m.screen()[27]
@@ -317,9 +356,9 @@ def test_tour_buttons_in_the_text_are_green(t):
     for lang, idx in (("en", 0), ("ptbr", 1)):
         m = t.menu(t.sd(config=FRESH + "Language: %d\n" % idx))
         _enter_tour(m, lang)
-        _goto_card(m, 7)
+        _goto_card(m, C_IGM)
         m.step(30)
-        lines = onb.STRINGS["onb_f7_text"][onb.LANGS.index(lang)]
+        lines = onb.STRINGS[f"onb_f{C_IGM}_text"][onb.LANGS.index(lang)]
         k = next(i for i, l in enumerate(lines) if "[L]+[R]" in l)
         raw = lines[k]
         plain = raw.replace("[", "").replace("]", "")
@@ -341,21 +380,17 @@ def test_tour_buttons_in_the_text_are_green(t):
         m.close()
 
 
-def test_tour_217_credits(t):
-    """The two community cartridge cards name who made the cores, in every language's
-    paragraph and on the screen."""
-    for n, who in ((16, "M2M"), (17, "terminator2k2")):
-        for k in range(len(onb.LANGS)):
-            assert any(who in line for line in onb.STRINGS["onb_f%d_text" % n][k]), (n, k)
-    m = t.menu(t.sd(config=FRESH))
-    _enter_tour(m)
-    for n, who in ((16, "M2M"), (17, "terminator2k2")):
-        _goto_card(m, n)
-        line = next(i for i, l in enumerate(onb.STRINGS["onb_f%d_text" % n][0]) if who in l)
-        m.wait_text(para(n, line=line))
-        m.step(30)
+def test_tour_names_no_authors(t):
+    """Credits live in the README and on the landing, never in the tour: no card name or
+    paragraph, in any language, names the community cartridges' authors."""
+    for key, cols in onb.STRINGS.items():
+        for k, col in enumerate(cols):
+            text = " ".join(col) if isinstance(col, (list, tuple)) else col
+            for who in ("M2M", "terminator2k2", "sttng"):
+                assert who not in text, (key, k, who)
 
 
+def test_tour_keeps_the_boot_intro(t):
     """The power-on screen is not a tour card (only the settings turn it off): walking the
     whole tour keeps BootIntro as it was, and the screen does not play again when the tour
     hands back to the menu (a menu reload is not a power-on)."""
@@ -398,10 +433,10 @@ def test_tour_music_follows_the_music_card(t):
     tour_log = lambda: m.fwlog().split("/sd2snes/onboarding.bin")[-1]
     m.wait(lambda: "cmd: 30" in tour_log(), frames=600, what="o tour pedir a musica")
     assert "file_open (/sd2snes/menu.spc, 01): FR_OK" in tour_log()
-    _goto_card(m, 4)
+    _goto_card(m, C_MUSIC)
     m.press("DOWN")                                   # No: the music stops
     m.wait(lambda: "RESET requested by SNES" in tour_log(), frames=600, what="o reset")
-    m.wait_text(f"4/{NCARDS}", frames=1500)            # back on the same card
+    m.wait_text(hdr(C_MUSIC), frames=1500)             # back on the same card
     lit = _list_lit(m, "Yes")                          # the list sits under the text
     m.wait(lambda: lit(1) > lit(0) + 40, what="No focado de volta")
     m.wait(lambda: m.peek("aram", 0x200, 6) == STUB, what="o stub do S-DSP")  # the silent stub
@@ -455,14 +490,14 @@ def test_tour_sounds_card_previews_and_undoes(t):
     m = t.menu(sd)
     _enter_tour(m)
     n = len(m.fwlog())
-    _goto_card(m, 6)
-    assert m.has(otr("onb_f6_name")), m.text()
+    _goto_card(m, C_SFX)
+    assert m.has(otr(f"onb_f{C_SFX}_name")), m.text()
     assert _sfx_count(m, n) == 0, m.fwlog()[n:]
     m.press("UP")                              # Yes: the preview
     m.wait(lambda: _sfx_count(m, n) > 0, what="a previa do som")
     m.step(40)
     m.press("LEFT")                            # left without answering
-    m.wait_text(f"5/{NCARDS}")
+    m.wait_text(hdr(C_RANDOM))
     m.step(40)
     k = len(m.fwlog())
     m.press("DOWN")
@@ -484,10 +519,10 @@ def test_tour_music_comes_back_when_its_card_is_left(t):
                     extra={"/sd2snes/menu.spc": spc}))
     _enter_tour(m)
     tour_log = lambda: m.fwlog().split("/sd2snes/onboarding.bin")[-1]
-    _goto_card(m, 4)
+    _goto_card(m, C_MUSIC)
     m.press("DOWN")
     m.wait(lambda: "RESET requested by SNES" in tour_log(), frames=600, what="o reset")
-    m.wait_text(f"4/{NCARDS}", frames=1500)
+    m.wait_text(hdr(C_MUSIC), frames=1500)
     m.step(30)
     after = lambda: tour_log().split("RESET requested by SNES")[-1].count("cmd: 30")
     before = after()
@@ -502,12 +537,12 @@ def test_tour_right_keeps_the_focused_answer(t):
     sd = t.sd(config=FRESH + "EnableMenuMusic: true\n")
     m = t.menu(sd)
     _enter_tour(m)
-    _goto_card(m, 4)
+    _goto_card(m, C_MUSIC)
     m.press("DOWN")                        # Yes -> No
     m.step(10)
     m.press("RIGHT")
-    m.wait_text(f"5/{NCARDS - 1}")         # the menu sounds card, random music left out
-    assert m.has(otr("onb_f6_name")), m.text()
+    m.wait_text(hdr(C_SFX, NO_RANDOM))     # the menu sounds card, random music left out
+    assert m.has(otr(f"onb_f{C_SFX}_name")), m.text()
     m.step(30)
     m.press("START")
     _back_to_menu(m)
@@ -527,7 +562,7 @@ def test_tour_language_card_switches_live(t):
     lit = _list_lit(m, "English")
     m.wait(lambda: lit(1) > lit(0) + 40, what="a barra na linha 1")
     m.press("A")
-    m.wait_text(f"2/{NCARDS}")
+    m.wait_text(hdr(2))
 
 
 def test_tour_opens_on_the_first_card_and_back_stays(t):
@@ -537,7 +572,7 @@ def test_tour_opens_on_the_first_card_and_back_stays(t):
     assert m.has(otr("onb_f1_name")), m.text()
     m.press("B")
     m.step(60)
-    assert m.has(f"1/{NCARDS}"), m.text()
+    assert m.has(hdr(1)), m.text()
 
 
 def _tour_in(t, idx):
@@ -547,11 +582,11 @@ def _tour_in(t, idx):
     lang = c.LANGS[idx]
     m = t.menu(t.sd(config=f"---\nLanguage: {idx}\nOnboardingVersion: 0\n"))
     _enter_tour(m, lang)
-    for n in range(1, NCARDS + 1):
+    for n in shown():
         _goto_card(m, n)
         assert c.UNKNOWN not in m.text(), f"{lang}: card {n}\n{m.text()}"
     m.press("RIGHT")
-    m.wait(lambda: not m.has(f"{NCARDS}/{NCARDS}"), what="a tela final")
+    m.wait(lambda: not m.has(hdr(NCARDS)), what="a tela final")
     m.step(30)
     assert c.UNKNOWN not in m.text(), f"{lang}: final\n{m.text()}"
 
@@ -591,7 +626,7 @@ def test_settings_entry_replays_tour(t):
     sd = t.sd()                                    # already onboarded -- no prompt
     m = t.menu(sd)
     _open_tour_entry(m)
-    m.wait_text(f"1/{NCARDS}", frames=1500)        # the whole tour, from its first card
+    m.wait_text(hdr(1), frames=1500)               # the whole tour, from its first card
     m.step(30)
     m.press("START")
     m.wait(lambda: m.has("Test Game.sfc"), frames=1500, what="o browser de volta")
@@ -657,7 +692,7 @@ def test_welcome_clip_plays_after_the_gate(t):
     vmax = _wel(m, "onb_wel_vmax", 2)
     assert 225 <= vmax < 262, hex(vmax)
     assert not m.dac_playing(), "the jingle's DAC was not released"
-    m.wait(lambda: m.has(f"1/{NCARDS}") or m.has(f"1/{NCARDS - 1}"), frames=900, what="o primeiro card")
+    m.wait(lambda: m.has(f"1/{TOTAL}") or m.has(f"1/{TOTAL - 1}"), frames=900, what="o primeiro card")
     m.close()
 
 
@@ -670,7 +705,7 @@ def test_welcome_clip_skip(t):
     m.wait(lambda: not m.dac_playing(), frames=120, what="o jingle parado")
     m.wait(lambda: _wel(m, "onb_wel_on") == 0, frames=120, what="o fim do clipe")
     assert _wel(m, "onb_wel_fi") < 40
-    m.wait(lambda: m.has(f"1/{NCARDS}") or m.has(f"1/{NCARDS - 1}"), frames=900, what="o primeiro card")
+    m.wait(lambda: m.has(f"1/{TOTAL}") or m.has(f"1/{TOTAL - 1}"), frames=900, what="o primeiro card")
     # the next menu blip plays through the DAC: what the cut jingle left in its buffer
     # must not come back with it (the FPGA's effect engine overwrites the buffer)
     m.step(60)
@@ -693,7 +728,8 @@ def test_welcome_clip_then_the_menu_music(t):
     m = t.menu(t.sd(config=FRESH + "EnableMenuMusic: true\n", misc=True))
     _into_welcome(m)
     m.press("START")
-    m.wait(lambda: m.has(f"1/{NCARDS}") or m.has(f"1/{NCARDS - 1}"), frames=1500, what="o primeiro card")
+    m.wait(lambda: m.has(f"1/{TOTAL}") or m.has(f"1/{TOTAL - 1}"),
+           frames=1500, what="o primeiro card")
     m.wait(lambda: "file_open (/sd2snes/menu.spc, 01): FR_OK" in m.fwlog().split("welcome.fmv")[-1],
            frames=600, what="a música do menu depois do reset")
     assert "RESET requested by SNES" in m.fwlog().split("welcome.fmv")[-1]
@@ -709,7 +745,8 @@ def test_welcome_clip_on_replay(t):
     _open_tour_entry(m)
     m.wait(lambda: _wel(m, "onb_wel_on") == 1, frames=1500, what="o clipe tocando")
     assert m.dac_playing(), "the jingle is not on the DAC"
-    m.wait(lambda: m.has(f"1/{NCARDS}") or m.has(f"1/{NCARDS - 1}"), frames=1500, what="o primeiro card")
+    m.wait(lambda: m.has(f"1/{TOTAL}") or m.has(f"1/{TOTAL - 1}"),
+           frames=1500, what="o primeiro card")
     m.step(120)
     assert m.fwlog().count("file_open (/sd2snes/welcome.fmv") == 1, "the clip played twice"
     m.close()
@@ -749,22 +786,426 @@ def test_tour_on_controller_2(t):
     m.step(20)
     m.press("B", pad=2)                            # skip the clip
     m.wait(lambda: _wel(m, "onb_wel_on") == 0, frames=120, what="o clipe pulado")
-    m.wait(lambda: m.has(f"1/{NCARDS}"), frames=900, what="o primeiro card")
+    m.wait(lambda: m.has(hdr(1)), frames=900, what="o primeiro card")
     m.step(30)
-    for _ in range(6):                             # page to card 2 (box art); like _goto_card,
-        if m.has(f"2/{NCARDS}"):                   # a press right after the fade can be lost
+    for _ in range(12):                            # page to the box art card; like _goto_card,
+        if m.has(hdr(C_COVERS)):                   # a press right after the fade can be lost
             break
         m.press("RIGHT", pad=2)
         m.step(40)
-    assert m.has(f"2/{NCARDS}"), m.text()
+    assert m.has(hdr(C_COVERS)), m.text()
     m.step(30)
     m.press("DOWN", pad=2)                         # Large -> Small
     m.step(10)
     m.press("A", pad=2)                            # keep it
-    m.wait_text(f"3/{NCARDS}")
+    m.wait_text(hdr(C_COVLISTS))
     m.step(30)
     m.press("START", pad=2)                        # end the tour
     _back_to_menu(m)
     m.close()
     cfg = _cfg(t, sd)
     assert "ShowCovers: 2" in cfg and SEEN in cfg, cfg
+
+
+# ---------------------------------------------------------------- the base tour's newer cards
+
+def _finish(m):
+    """START on a card: the tour ends there, keeping every answer given."""
+    m.step(30)
+    m.press("START")
+    _back_to_menu(m)
+
+
+def test_tour_font_edge_cards_save(t):
+    """Text outline and anti-aliasing: Theme / On / Off, in the menu's kv_text_edge order
+    (0 / 1 / 2); the bar starts on the saved value and A keeps the focused one."""
+    sd = t.sd(config=FRESH)
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_OUTLINE)
+    assert m.has(otr(f"onb_f{C_OUTLINE}_name")), m.text()
+    lit = _list_lit(m, otr("onb_text_theme"))
+    m.wait(lambda: lit(0) > lit(1) + 40, what="a barra em Tema")
+    m.press("DOWN")
+    m.step(10)
+    m.press("DOWN")                        # -> Off
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_AA))
+    assert m.has(otr(f"onb_f{C_AA}_name")), m.text()
+    m.step(30)
+    m.press("DOWN")                        # -> On
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_COVERS))
+    _finish(m)
+    m.close()
+    cfg = _cfg(t, sd)
+    assert "TextOutline: 2" in cfg and "TextAntiAlias: 1" in cfg, cfg
+
+
+def test_tour_covers_in_lists_depends_on_box_art(t):
+    """Covers in Recent/Favorites is asked only with the box art on: Off on the box art
+    card leaves it out; with covers on, its No is saved."""
+    m = t.menu(t.sd(config=FRESH + "ShowCovers: 1\n"))
+    _enter_tour(m)
+    _goto_card(m, C_COVERS)
+    m.press("UP")                          # Large -> Off
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_GI, NO_COVLISTS))    # the game info card takes its place
+    assert m.has(otr(f"onb_f{C_GI}_name")), m.text()
+    m.close()
+    sd = t.sd(config=FRESH + "ShowCovers: 1\nShowCoversInLists: true\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_COVLISTS)
+    assert m.has(otr(f"onb_f{C_COVLISTS}_name")), m.text()
+    m.press("DOWN")                        # Yes -> No
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_GI))
+    _finish(m)
+    m.close()
+    assert "ShowCoversInLists: false" in _cfg(t, sd), _cfg(t, sd)
+
+
+def test_tour_video_cards_depend_on_the_game_info(t):
+    """The clip card needs the game info card, its music card needs both: game info Off
+    leaves the two out; the video's No leaves the music out and is saved."""
+    m = t.menu(t.sd(config=FRESH + "ShowGameInfo: 1\n"))
+    _enter_tour(m)
+    _goto_card(m, C_GI)
+    m.press("UP")                          # On -> Off
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_MUSIC, NO_GI))       # menu music takes the video's place
+    assert m.has(otr(f"onb_f{C_MUSIC}_name")), m.text()
+    m.close()
+    sd = t.sd(config=FRESH + "ShowGameInfo: 2\nGameInfoVideo: true\nGameInfoMusic: true\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_VIDEO)
+    assert m.has(otr(f"onb_f{C_VIDEO}_name")), m.text()
+    m.press("DOWN")                        # Yes -> No
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_MUSIC, NO_VIDEO))    # the clip's music is left out
+    assert m.has(otr(f"onb_f{C_MUSIC}_name")), m.text()
+    _finish(m)
+    m.close()
+    cfg = _cfg(t, sd)
+    assert "GameInfoVideo: false" in cfg and "GameInfoMusic: true" in cfg, cfg
+
+
+def test_tour_clip_music_card_saves(t):
+    """With the card and its clip on, the music card asks and keeps its No."""
+    sd = t.sd(config=FRESH + "ShowGameInfo: 1\nGameInfoVideo: true\nGameInfoMusic: true\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_CLIPMUSIC)
+    assert m.has(otr(f"onb_f{C_CLIPMUSIC}_name")), m.text()
+    m.press("DOWN")
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_MUSIC))
+    _finish(m)
+    m.close()
+    assert "GameInfoMusic: false" in _cfg(t, sd), _cfg(t, sd)
+
+
+def test_tour_sd2snes_folder_card_saves(t):
+    sd = t.sd(config=FRESH + "ShowSd2snesFolder: false\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_SD2SNESDIR)
+    assert m.has(otr(f"onb_f{C_SD2SNESDIR}_name")), m.text()
+    lit = _list_lit(m, otr("onb_text_yes"))
+    m.wait(lambda: lit(1) > lit(0) + 40, what="a barra em Nao (o valor salvo)")
+    m.press("UP")                          # -> Yes
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_RESET))
+    _finish(m)
+    m.close()
+    assert "ShowSd2snesFolder: true" in _cfg(t, sd), _cfg(t, sd)
+
+
+def test_tour_competition_cart_round_scrolls(t):
+    """Sixteen answers (3..18 min) do not fit under the text: the list scrolls with the bar
+    and the menu's scroll bar shows. The bar starts on the saved 6 min; the last one is kept."""
+    sd = t.sd(config=FRESH + "CompCartTimeLimit: 3\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_CCTIME)
+    import re
+    first, last = otr("onb_text_cc_3"), otr("onb_text_cc_18")
+    shows_3 = lambda: re.search(r"(?<!\d)" + re.escape(first), m.text()) is not None  # not "13 min"
+    assert shows_3() and not m.has(last), m.text()
+    lit = _list_lit(m, first)
+    m.wait(lambda: lit(3) > lit(0) + 40, what="a barra em 6 min")
+    thumb = lambda: [r for r in range(28) if m.tile_at(29, r)[0] == 17]   # ONB_SB_X, glyph 17
+    assert thumb(), m.text()               # the menu's scroll bar: its thumb...
+    top = thumb()[0]
+    for _ in range(14):
+        m.press("DOWN")
+        m.step(12)
+    m.wait_text(last)                      # scrolled down to it...
+    assert not shows_3(), m.text()         # ...and the first one went off the top
+    assert thumb() and thumb()[0] > top, (top, thumb())   # ...and the thumb went down
+    m.press("A")
+    m.wait_text(hdr(C_CONSOLES))
+    _finish(m)
+    m.close()
+    assert "CompCartTimeLimit: 15" in _cfg(t, sd), _cfg(t, sd)
+
+
+def test_tour_new_info_cards_show_their_text(t):
+    """The info-only cards of the base tour draw their name and first line (the Mk.II's
+    LED card is not shown on the Ciclone's Mk.III)."""
+    m = t.menu(t.sd(config=FRESH))
+    _enter_tour(m)
+    for n in (C_THEME, C_PCM, C_CHEATLIST, C_SAVES, C_TRAINER, C_PATCHES, C_CREATEROM, C_CHIPS,
+              C_SUFAMI, C_CONSOLES, C_ATARI, C_FOLDERS, C_MEMTEST):
+        _goto_card(m, n)
+        assert m.has(otr(f"onb_f{n}_name")), (n, m.text())
+        m.wait_text(para(n))
+    m.close()
+
+
+def test_tour_card_order(t):
+    """The tour's order, by its English names: the look, the music, the file list, the
+    cheats and the in-game menu, the patches and the chips, the other consoles, the card and
+    the hardware, "And more", then the 2.17 section. The NES/SMS/Atari buttons card is gone
+    (its reset and menu combos are the usual ones; the NES palette one is on the consoles
+    card), and the special chips item of "And more" became a card."""
+    name = lambda n: onb.NAMES[n - 1][0]
+    assert len(onb.NAMES) == NCARDS + MORE_ITEMS
+    assert [name(n) for n in range(1, NCARDS + 1)] == [
+        "Language", "Themes", "Text outline", "Text anti-aliasing", "Box art in the list",
+        "Covers in Recent/Favorites", "Game info card", "Video in the game info",
+        "Music of the video", "Menu music", "Random music", "Menu sounds", "MSU-1 folders",
+        "MSU-1 track player", "Show sd2snes folder", "Smart reset", "The cheat list",
+        "In-game menu", "Savestates", "4 saves per game", "RAM trainer", "IPS/BPS patches",
+        "Create patched ROM", "More special chips", "Sufami Turbo Slot B",
+        "Competition Cart round", "Other consoles", "Atari 2600 controls",
+        "Folders on the card", "Memory test", "Mk.II boot errors on the LED", "And more",
+        "What's new in 2.17", "Controller 2 shortcuts/hooks", "Game Boy Color",
+        "Shortcut/hook list", "Seta chips and bootlegs", "Super 20 in 1, Gamars, .sfrom",
+        "Icons in the list", "Cheats from the game info"]
+    items = [name(n) for n in range(NCARDS + 1, NCARDS + MORE_ITEMS + 1)]
+    assert items == ["Clear PPU on boot", "Bus timing compat", "Hardware model",
+                     "BS-X and Memory Pack", "Delete files and saves", "Missing BIOS warning",
+                     "Clock and date", "Option descriptions"], items
+
+
+def _descriptors():
+    """onb_feat_table as written: (n, parent, second parent, flags, option kind)."""
+    import re
+    src = (c.SD2SNES / "snes" / "onboarding" / "onboarding_const.a65").read_text()
+    rows = re.findall(r"^\s*\.word ([^,]+), 1, onb_f(\d+)_name, onb_f\d+_text, ([^,]+), ([^ ;]+)"
+                      r"[^\n]*\n\s*\.byt ONB_PAL_\w+, ONB_OPT_(\w+)", src, re.M)
+    return [(int(n), dep.strip(), dep2.strip(), fl.strip(), opt) for dep, n, dep2, fl, opt in rows]
+
+
+def test_tour_descriptors_per_board(t):
+    """The cards of the cores only the FXPAK PRO (Mk.III) has (other consoles, the Atari's
+    controls, Game Boy Color) are flagged for it, the Mk.II's LED codes for the Mk.II: 39
+    cards on a Mk.III, 37 on a Mk.II. The dependencies point at the right parents after the
+    reorder, and the hook flags sit on the in-game menu, savestates and controller 2 cards."""
+    d = {n: (dep, dep2, fl, opt) for n, dep, dep2, fl, opt in _descriptors()}
+    assert sorted(d) == list(range(1, NCARDS + MORE_ITEMS + 1)), sorted(d)
+    mk3 = [n for n in d if "ONB_FF_MK3ONLY" in d[n][2]]
+    mk2 = [n for n in d if "ONB_FF_MK2ONLY" in d[n][2]]
+    assert mk3 == list(MK3ONLY) and mk2 == list(MK2ONLY), (mk3, mk2)
+    cards = range(1, NCARDS + 1)
+    assert len([n for n in cards if n not in mk2]) == 39
+    assert len([n for n in cards if n not in mk3]) == 37
+    hook = {n for n in d if "ONB_FF_HOOK" in d[n][2]}
+    assert hook == {C_IGM, C_STATES, C_PAD2}, hook
+    assert "ONB_FF_BUTTONS" in d[C_PAD2][2]
+    parents = {n: (d[n][0], d[n][1]) for n in d if d[n][0] != "0" or d[n][1] != "0"}
+    assert parents == {
+        C_COVLISTS: ("!CFG_SHOW_COVERS", "0"),
+        C_VIDEO: ("!CFG_SHOW_GAME_INFO", "0"),
+        C_CLIPMUSIC: ("!CFG_GAME_INFO_VIDEO", "!CFG_SHOW_GAME_INFO"),
+        C_RANDOM: ("!CFG_ENABLE_MENU_MUSIC", "0"),
+        C_SAVES: ("!CFG_ENABLE_CHEAT_OVERLAY", "0"),
+        C_TRAINER: ("!CFG_ENABLE_CHEAT_OVERLAY", "0"),
+    }, parents
+    assert d[MORE_CARD][3] == "MORE"
+
+
+def test_tour_ingame_menu_cards_depend_on_it(t):
+    """The 4 saves and the RAM trainer live in the in-game menu: its No leaves both out (Right
+    from savestates lands on the patches card); with it on, each follows its card."""
+    m = t.menu(t.sd(config=FRESH + "EnableCheatOverlay: true\n"))
+    _enter_tour(m)
+    _goto_card(m, C_IGM)
+    m.press("DOWN")                        # Yes -> No
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_STATES, NO_IGM))
+    m.step(30)
+    m.press("A")
+    m.wait_text(hdr(C_PATCHES, NO_IGM))
+    assert m.has(otr(f"onb_f{C_PATCHES}_name")), m.text()      # the 4 saves and the trainer left out
+    m.step(30)
+    m.press("LEFT")                        # back skips them too
+    m.wait_text(hdr(C_STATES, NO_IGM))
+    assert m.has(otr(f"onb_f{C_STATES}_name")), m.text()
+    m.step(30)
+    m.press("LEFT")
+    m.wait_text(hdr(C_IGM, NO_IGM))
+    m.step(30)
+    m.press("UP")                          # the kept No -> Yes
+    m.step(10)
+    m.press("A")                           # both come back
+    m.wait_text(hdr(C_STATES))
+    m.step(30)
+    m.press("A")
+    m.wait_text(hdr(C_SAVES))
+    assert m.has(otr(f"onb_f{C_SAVES}_name")), m.text()
+    m.wait_text(para(C_SAVES))
+    m.step(30)
+    m.press("RIGHT")
+    m.wait_text(hdr(C_TRAINER))
+    assert m.has(otr(f"onb_f{C_TRAINER}_name")), m.text()
+    m.wait_text(para(C_TRAINER))
+    m.close()
+
+
+# the CFG bytes the hook-dependent cards touch (offsets in cfg_t, bank $FF from $FF0100)
+CFG_HOOK, CFG_BUTTONS, CFG_STATES, CFG_OVERLAY, CFG_PAD2 = 0x11, 0x12, 0xA3, 0x13D, 0x1D3
+HOOK_OFF = FRESH + "EnableIngameHook: false\nEnableIngameButtons: false\n"
+
+
+def _cfgb(m, off):
+    """A byte of the CFG block as the tour leaves it (the MCU saves it at the end)."""
+    return m.psram(0xFF0100 + off, 1)[0]
+
+
+def _walk_to(m, pos, total):
+    """Right until the header says pos/total (Right keeps each card's focused answer)."""
+    for _ in range(total + 2):
+        if m.has(f"{pos}/{total}"):
+            m.step(30)
+            return
+        m.press("RIGHT")
+        m.step(40)
+    raise c.MenuError(f"card {pos}/{total} not reached\n{m.text()}")
+
+
+def test_tour_hook_cards_shown_with_the_hook_off(t):
+    """The cards of the in-game hook features do not hang on the hook: with it off, the
+    tour still counts all of them (the 4 saves and the trainer only follow the in-game
+    menu card)."""
+    m = t.menu(t.sd(config=HOOK_OFF + "EnableCheatOverlay: true\n"))
+    _enter_tour(m, total=TOTAL)
+    assert _cfgb(m, CFG_HOOK) == 0
+    _walk_to(m, pos(C_CHEATLIST), TOTAL)
+    assert _cfgb(m, CFG_HOOK) == 0
+    m.close()
+
+
+def test_tour_ingame_menu_yes_turns_the_hook_on(t):
+    """Yes on the in-game menu card with the hook off keeps the menu AND turns the hook on
+    (the in-game buttons are not needed by it and stay as they were); the 4 saves and the
+    trainer come in with it."""
+    total = tot(NO_IGM)                    # the menu off: the 4 saves and the trainer left out
+    sd = t.sd(config=HOOK_OFF + "EnableCheatOverlay: false\n")
+    m = t.menu(sd)
+    _enter_tour(m, total=total)
+    _walk_to(m, pos(C_IGM, NO_IGM), total)
+    assert m.has(otr(f"onb_f{C_IGM}_name")), m.text()
+    assert _cfgb(m, CFG_HOOK) == 0
+    m.press("UP")                          # No -> Yes
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_STATES))
+    assert (_cfgb(m, CFG_OVERLAY), _cfgb(m, CFG_HOOK), _cfgb(m, CFG_BUTTONS)) == (1, 1, 0)
+    m.step(30)
+    m.press("RIGHT")
+    m.wait_text(hdr(C_SAVES))
+    assert m.has(otr(f"onb_f{C_SAVES}_name")), m.text()
+    _finish(m)
+    m.close()
+    cfg = _cfg(t, sd)
+    for want in ("EnableCheatOverlay: true", "EnableIngameHook: true", "EnableIngameButtons: false"):
+        assert want in cfg, (want, cfg)
+
+
+def test_tour_no_never_turns_the_hook_off(t):
+    """No on the in-game menu and on the savestates cards keeps the hook on; the in-game
+    menu off still leaves the 4 saves and the trainer out (Right from savestates lands on
+    the patches card, Left goes back to savestates)."""
+    sd = t.sd(config=FRESH + "EnableCheatOverlay: true\nEnableIngameSavestate: true\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_IGM)
+    assert _cfgb(m, CFG_HOOK) == 1
+    m.press("DOWN")                        # Yes -> No
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_STATES, NO_IGM))
+    assert (_cfgb(m, CFG_OVERLAY), _cfgb(m, CFG_HOOK)) == (0, 1)
+    m.step(30)
+    m.press("DOWN")                        # savestates: Yes -> No
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_PATCHES, NO_IGM))
+    assert m.has(otr(f"onb_f{C_PATCHES}_name")), m.text()      # the 4 saves and the trainer left out
+    assert (_cfgb(m, CFG_STATES), _cfgb(m, CFG_HOOK)) == (0, 1)
+    m.step(30)
+    m.press("RIGHT")
+    m.wait_text(hdr(C_CREATEROM, NO_IGM))
+    m.step(30)
+    m.press("LEFT")
+    m.wait_text(hdr(C_PATCHES, NO_IGM))
+    m.step(30)
+    m.press("LEFT")
+    m.wait_text(hdr(C_STATES, NO_IGM))
+    _finish(m)
+    m.close()
+    cfg = _cfg(t, sd)
+    for want in ("EnableCheatOverlay: false", "EnableIngameSavestate: 0", "EnableIngameHook: true"):
+        assert want in cfg, (want, cfg)
+
+
+def test_tour_savestates_yes_turns_the_hook_on(t):
+    """Yes on the savestates card turns the hook on too; a No kept on the in-game menu
+    card before it left the hook off."""
+    total = tot(NO_IGM)
+    m = t.menu(t.sd(config=HOOK_OFF + "EnableCheatOverlay: false\nEnableIngameSavestate: false\n"))
+    _enter_tour(m, total=total)
+    _walk_to(m, pos(C_STATES, NO_IGM), total)   # Right on the in-game menu card kept its No
+    assert m.has(otr(f"onb_f{C_STATES}_name")), m.text()
+    assert (_cfgb(m, CFG_OVERLAY), _cfgb(m, CFG_HOOK)) == (0, 0)
+    m.press("UP")                          # No -> Yes
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_PATCHES, NO_IGM))
+    assert (_cfgb(m, CFG_STATES), _cfgb(m, CFG_HOOK), _cfgb(m, CFG_BUTTONS)) == (1, 1, 0)
+    m.close()
+
+
+def test_tour_pad2_yes_turns_the_hook_and_buttons_on(t):
+    """The controller 2 card needs the hook and the in-game buttons (the FPGA's fixed
+    gestures): its Yes turns both on, after the Nos kept on the cards before left them off."""
+    total = tot(NO_IGM)
+    sd = t.sd(config=HOOK_OFF + "EnableCheatOverlay: false\nEnableIngameSavestate: false\n")
+    m = t.menu(sd)
+    _enter_tour(m, total=total)
+    _walk_to(m, pos(C_PAD2, NO_IGM), total)   # the 4 saves and the trainer are left out before it
+    assert m.has(otr(f"onb_f{C_PAD2}_name")), m.text()
+    assert (_cfgb(m, CFG_HOOK), _cfgb(m, CFG_BUTTONS), _cfgb(m, CFG_PAD2)) == (0, 0, 0)
+    m.press("UP")                          # No -> Yes
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_GBC, NO_IGM))
+    assert (_cfgb(m, CFG_HOOK), _cfgb(m, CFG_BUTTONS), _cfgb(m, CFG_PAD2)) == (1, 1, 1)
+    _finish(m)
+    m.close()
+    cfg = _cfg(t, sd)
+    for want in ("EnableIngamePad2: true", "EnableIngameHook: true", "EnableIngameButtons: true"):
+        assert want in cfg, (want, cfg)
