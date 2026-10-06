@@ -139,16 +139,17 @@ def encode_menu_text(s: str) -> str:
 
 # ---------------------------------------------------------------- cartão (imagem FAT32)
 def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra: dict | None = None,
-            onboarding: bool = True, misc: bool = False) -> Path:
+            onboarding: bool = True, misc: bool = False, lang: bool = True) -> Path:
     """Imagem do cartão com o menu do pacote. `config` = conteúdo do config.yml inicial;
     `extra` = {caminho no cartão: bytes} gravados por cima da árvore de teste;
     `onboarding=False` deixa o onboarding.bin (ROM do tour) fora do cartão;
+    `lang=False` deixa os idiomas CJK (/sd2snes/lang/*.bin) fora do cartão;
     `misc=True` põe os arquivos de som que o release traz (menu.spc, sfx_*.pcm e o clipe
     de boas-vindas do tour, welcome.fmv/.pcm)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, M3NU=str(MENU_DIR / "m3nu.bin"), IGMENU=str(MENU_DIR / "igmenu.bin"),
                SD_FIXTURES="1" if fixtures else "0", SD_NO_ONBOARDING="0" if onboarding else "1",
-               SD_MISC="1" if misc else "0")
+               SD_MISC="1" if misc else "0", SD_NO_LANG="0" if lang else "1")
     # The first-boot tour prompt would sit over the browser in every test: a card is
     # "already onboarded" (any tour version: 255) unless the test's config names the
     # key itself.

@@ -29,6 +29,9 @@ rm -f "$DEST"/*.map
 scp -q "$SERVER:$SERVER_DIR/snes/m3nu.bin" "$SERVER:$SERVER_DIR/snes/igmenu.bin" "$DEST/"
 # the first-boot tour ROM, when this tree builds one
 scp -q "$SERVER:$SERVER_DIR/snes/onboarding.bin" "$DEST/" 2>/dev/null || rm -f "$DEST/onboarding.bin"
+# the CJK menu languages (snes/cjk.a65), when this tree builds them
+rm -f "$DEST"/lang_*.bin "$DEST"/lang_*.fnt
+scp -q "$SERVER:$SERVER_DIR/snes/lang_*.bin" "$SERVER:$SERVER_DIR/snes/lang_*.fnt" "$DEST/" 2>/dev/null || true
 scp -q "$SERVER:$SERVER_DIR/snes/*.map" "$DEST/"
 git -C "$REPO" rev-parse --short "${REF:-HEAD}" > "$DEST/REV" 2>/dev/null || true
 [ -n "${REF:-}" ] || git -C "$REPO" diff --quiet -- src snes 2>/dev/null || echo "+dirty" >> "$DEST/REV"

@@ -49,11 +49,11 @@ class T:
             print(f"    [{self.name}]", *a, flush=True)
 
     def sd(self, config: str | None = None, extra: dict | None = None, fixtures: bool = True,
-           onboarding: bool = True, misc: bool = False) -> Path:
+           onboarding: bool = True, misc: bool = False, lang: bool = True) -> Path:
         """Imagem do cartão só deste teste (clone APFS de um template em cache)."""
         h = hashlib.sha1()
         h.update((c.MENU_DIR / "m3nu.bin").read_bytes())
-        for extra_bin in ("onboarding.bin", "igmenu.bin"):     # both go on every card, so both
+        for extra_bin in ("onboarding.bin", "igmenu.bin", "lang_ja.bin", "lang_zh.bin", "lang_ja.fnt", "lang_zh.fnt"):  # all go on every card, so all
             f = c.MENU_DIR / extra_bin                          # key the template cache
             if f.exists():
                 h.update(f.read_bytes())
@@ -61,7 +61,7 @@ class T:
             for f in sorted((c.SD2SNES / "misc").glob("*")):
                 if f.is_file():
                     h.update(f.read_bytes())
-        h.update(repr((config, fixtures, onboarding, misc, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
+        h.update(repr((config, fixtures, onboarding, misc, lang, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
         for f in ("tools/make_sdimg.sh", "tools/sd_fixtures.py", "tests/menu/ciclone.py"):
             h.update((c.ROOT / f).read_bytes())
         for f in ("savestate_inputs.yml", "savestate_fixes.yml"):     # copied onto every card
@@ -71,7 +71,7 @@ class T:
         with _sd_lock:
             if not tpl.exists():
                 c.make_sd(tpl.with_suffix(".tmp.img"), config=config, fixtures=fixtures, extra=extra,
-                          onboarding=onboarding, misc=misc)
+                          onboarding=onboarding, misc=misc, lang=lang)
                 tpl.with_suffix(".tmp.img").rename(tpl)
         self._n += 1
         dst = self.dir / f"sd{self._n}.img"

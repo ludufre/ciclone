@@ -41,6 +41,11 @@ if [ "${SD_MISC:-1}" = "1" ]; then
 fi
 IGM="${IGMENU:-$(dirname "$M3NU")/igmenu.bin}"
 [ -f "$IGM" ] && cp "$IGM" "$MNT/sd2snes/igmenu.bin"          # in-game menu shell (bank $C8)
+# CJK menu languages (ja/zh): strings + glyphs the menu loads into WRAM (snes/cjk.a65)
+if [ "${SD_NO_LANG:-0}" != "1" ] && ls "$(dirname "$M3NU")"/lang_*.bin >/dev/null 2>&1; then
+  mkdir -p "$MNT/sd2snes/lang"
+  for f in "$(dirname "$M3NU")"/lang_*.bin "$(dirname "$M3NU")"/lang_*.fnt; do [ -f "$f" ] || continue; b=$(basename "$f"); cp "$f" "$MNT/sd2snes/lang/${b#lang_}"; done
+fi
 # per-game savestate combos and audio fixes, as a release card carries them (from the firmware tree)
 for f in savestate_inputs.yml savestate_fixes.yml; do
   [ -f "$ROOT/extern/sd2snes/savestate/$f" ] && cp "$ROOT/extern/sd2snes/savestate/$f" "$MNT/sd2snes/$f"
