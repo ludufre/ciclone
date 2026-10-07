@@ -44,6 +44,23 @@ def test_boot_rom_records_recent(t):
     assert rec is not None and rec.startswith(b"/Test Game.sfc"), rec
 
 
+def test_boot_hands_over_a_clean_ppu(t):
+    """Toda carga, com ou sem patch: o jogo recebe VRAM, CGRAM e OAM zeradas. O reset do boot
+    preserva a PPU, e um romhack que liga uma camada sem escrever o tilemap dela mostraria as
+    sobras do menu (num emulador a VRAM nasce zerada e o defeito não aparece)."""
+    m = t.menu(t.sd())
+    m.goto("Test Game.sfc")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="a ficha")
+    m.press("A")
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=900, what="o boot da ROM")
+    m.step(30)                                          # a ROM de teste é só um laço: não toca a PPU
+    for space, n in (("vram", 0x10000), ("cgram", 0x200), ("oam", 0x220)):
+        mem = m.peek(space, 0, n)
+        dirty = sum(1 for b in mem if b)
+        assert dirty == 0, f"{space}: {dirty} bytes não zerados"
+
+
 LISTS = {
     "/sd2snes/lastgame.cfg": b"/Test Game.sfc\n/MSU Game/msugame.sfc\n",
     "/sd2snes/favorites.cfg": b"/Two Games/second.sfc\n",

@@ -612,7 +612,7 @@ def _open_tour_entry(m):
         m.press("DOWN")
         m.step(4)
     m.press("A")
-    m.wait_text(c.tr("mtext_cfg_patch"))
+    m.wait_text(c.tr("mtext_cfg_tour"))
     for _ in range(14):
         if c.encode_menu_text(c.tr("mtext_cfg_tour")) in m.bar_row():
             break
