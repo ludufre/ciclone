@@ -376,3 +376,47 @@ def test_savestate_restores_the_song_ki_rev1(t):
 def test_savestate_restores_the_song_ki_europe(t):
     """savestate_fixes.yml 850A (tools/ssfix/ki_850a.s): the same driver, pending song at $AB."""
     _ki_song_back_after_load(t, KI_EU, "Killer Instinct (Europe)", 0x7E17DC, 0x7E00AB, 0x7E17DE)
+
+
+HX_PAD2 = 0xFF07E4        # the stub's controller-2 sample (BSRAM)
+
+
+def _play_smw_pad2(t):
+    m = t.menu(t.sd(config="---\nEnableIngamePad2: true\n",
+                    extra={"/Super Mario World.sfc": c.game_rom(SMW, "Super Mario World (USA)")}))
+    m.goto("Super Mario World.sfc")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game card")
+    m.press("A")
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="the ROM boot")
+    m.step(900)                                         # past the 10 s hook holdoff
+    return m
+
+
+def test_pad2_sample_follows_the_pad(t):
+    """EnableIngamePad2: the stub's controller-2 sample tracks the pad on every frame. SMW's
+    NMI lands inside the auto-joypad fill every frame; skipping the read there (instead of
+    waiting for the fill to end) left the sample stuck and controller 2 dead in the game."""
+    m = _play_smw_pad2(t)
+    miss = []
+    for i in range(60):
+        held = (i // 2) % 2                             # X held two frames, released two
+        if held:
+            m.hold("X", pad=2)
+        else:
+            m.release(pad=2)
+        m.step(1)
+        got = int.from_bytes(m.psram(HX_PAD2, 2), "little") & 0x0040
+        if bool(got) != bool(held):
+            miss.append(i)
+    assert not miss, f"controller-2 sample stale on frames {miss}"
+
+
+def test_pad2_gesture_reset_to_menu(t):
+    """The back-to-menu gesture (L+R+Select+X) on controller 2, held briefly."""
+    m = _play_smw_pad2(t)
+    m.hold("L", "R", "SEL", "X", pad=2)
+    m.step(6)
+    m.release(pad=2)
+    m.wait(lambda: "snes loop cmd=81" in m.fwlog(), frames=300, what="the gesture at the MCU")
+    m.wait(lambda: "Super Mario World.sfc" in m.list_names(), frames=1200, what="the menu")
