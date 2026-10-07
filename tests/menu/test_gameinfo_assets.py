@@ -139,3 +139,29 @@ def test_select_on_recent_game_info_opens_its_cheats(t):
     assert m.has(c.tr("text_last")), m.text()          # de volta a lista de Recentes
     m.close()
     assert b"Enabled: true" in t.read(sd, "/sd2snes/cheats/TE/Test Game.yml")
+
+
+def test_back_from_game_info_shows_the_finished_browser(t):
+    """B on the game info screen: the browser must not be seen while it repaints (the list
+    building up row by row with the bar on the first row, then jumping to the game). Every
+    frame lit after the B already shows the final list with the bar on the game."""
+    sd = t.sd(config="---\nShowGameInfo: 1\n", extra={"/sd2snes/info/TE/Test Game.yml": YML})
+    m = t.menu(sd)
+    m.goto("Test Game.sfc")
+    m.settle()
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has("Probe Title"), what="a ficha")
+    m.settle()
+    m.press("B")
+    lit = []
+    for _ in range(120):
+        m.step(1)
+        if m.u16("screen_dma_disable") == 0 and m.u8("cur_bright") > 0:
+            lit.append((m.frame, m.list_names(), m.bar_row()))
+    m.settle()
+    final = m.list_names()
+    assert m.selected() == "Test Game.sfc", m.text()
+    assert lit, "the browser never lit up again"
+    for f, names, bar in lit:
+        assert names == final, f"frame {f}: lit with an unfinished list {names}"
+        assert bar.startswith("Test Game.sfc"), f"frame {f}: lit with the bar on {bar!r}"

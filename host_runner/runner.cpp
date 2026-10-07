@@ -354,6 +354,10 @@ static void serve_loop(ciclone::FpgaModel *m) {
         ciclone_model_unlock();
       } else { fprintf(g_proto, "err space\n"); fflush(g_proto); continue; }
       fprintf(g_proto, "ok %s\n", out.c_str());
+    } else if (!strcmp(cmd, "cpu")) {       // the S-CPU's PB:PC and S right now
+      uint32_t pc = 0; uint16_t sp = 0;
+      ciclone_cpu_state(&pc, &sp);
+      fprintf(g_proto, "ok %06x %04x\n", pc, sp); fflush(g_proto);
     } else if (!strcmp(cmd, "sfx")) {       // the SFX fetcher's last SFX_PLAY: base len
       uint32_t base = 0, len = 0;
       ciclone_model_lock(); m->sfx_state(&base, &len); ciclone_model_unlock();

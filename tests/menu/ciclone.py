@@ -306,6 +306,11 @@ class Menu:
         self.step(after)
 
     # -- memória
+    def cpu(self) -> tuple[int, int]:
+        """The S-CPU's PB:PC and S at this point of the frame."""
+        r = self._cmd("cpu").split()
+        return int(r[0], 16), int(r[1], 16)
+
     def sfx(self) -> tuple[int, int]:
         """The FPGA model's SFX fetcher (FPGA_CMD_SFX_PLAY): (PSRAM base, byte length) of the
         last effect the firmware started -- (0, 0) when none."""
