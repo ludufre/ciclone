@@ -474,12 +474,12 @@ class Menu:
         que chega atrasado."""
         return self.screen()[self.u8("bar_yl") + 1].strip()
 
-    def goto(self, name: str, max_steps: int = 40):
+    def goto(self, name: str, max_steps: int = 40, pad: int = 1):
         """Move o cursor até a entrada `name` no diretório corrente (só DOWN, a partir do topo)."""
         for _ in range(max_steps):
             if self.selected() == name:
                 return
-            self.press("DOWN")
+            self.press("DOWN", pad=pad)
             self.settle(stable=8)
         raise MenuError(f"não achei {name!r} no browser\n{self.text()}")
 

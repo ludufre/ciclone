@@ -420,3 +420,44 @@ def test_pad2_gesture_reset_to_menu(t):
     m.release(pad=2)
     m.wait(lambda: "snes loop cmd=81" in m.fwlog(), frames=300, what="the gesture at the MCU")
     m.wait(lambda: "Super Mario World.sfc" in m.list_names(), frames=1200, what="the menu")
+
+
+def test_ingame_menu_closes_at_once_with_a_mouse_in_port_1(t):
+    """A mouse in port 1 (Mario Paint) and the in-game menu opened and closed from controller 2:
+    the close waits for the pads to be released, and a mouse never reads zero (its ID lives in
+    the low nibble), so before the ID filter every close sat out the drain's 3 s ceiling."""
+    m = t.menu(t.sd(config="---\nEnableIngamePad2: true\n",
+                    extra={"/Super Mario World.sfc": c.game_rom(SMW, "Super Mario World (USA)")}),
+               env={"CICLONE_PORT1": "mouse"})
+    m.goto("Super Mario World.sfc", pad=2)              # the menu ignores the mouse, as on a console
+    m.press("A", pad=2)
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game card")
+    m.press("A", pad=2)
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="the ROM boot")
+    m.step(900)                                         # past the 10 s hook holdoff
+    m.hold(*MENU_COMBO, pad=2)
+    m.step(20)
+    m.release(pad=2)
+    m.wait(lambda: m.rgb(12, 10) == TAB_ON, frames=120, what="the in-game menu")
+    m.step(30)
+    frame = lambda: m.u8(SMW_FRAME)                     # noqa: E731
+    m.press("B", pad=2, hold=6, after=0)
+    f = frame()
+    for n in range(240):
+        m.step(1)
+        if frame() != f:
+            break
+    assert n < 30, f"the game resumed {n} frames after B"
+
+
+def test_pad2_savestate_saves_once(t):
+    """Start+R on controller 2, held for a second: one save. The save's second opinion re-read
+    the live $4218 (controller 1, idle) and rejected every port-2 match, and the wait for the
+    combo's release watched port 1 only, so a held port-2 combo would have saved again."""
+    m = _play_smw_pad2(t)
+    m.hold("START", "R", pad=2)
+    m.step(60)
+    m.release(pad=2)
+    m.step(300)
+    saves = m.fwlog().count(f"file_open ({SMW_STATE}, 0a)")
+    assert saves == 1, f"{saves} state writes"

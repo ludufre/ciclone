@@ -56,7 +56,8 @@ static int16_t g_buttons2[16] = {0};  // controle 2 (só o protocolo --serve o a
 static uint16_t g_menu_mask = 0;
 static int g_menu_hold = 0;
 constexpr int MENU_HOLD = 20;
-static int16_t istate(bool port2, unsigned, unsigned, unsigned id) {
+static int16_t istate(bool port2, unsigned device, unsigned, unsigned id) {
+  if (device == SNES_DEVICE_MOUSE) return 0;   // CICLONE_PORT1=mouse: a mouse at rest, no button
   if (id >= 16) return 0;
   if (port2) return g_buttons2[id];   // a porta 2 é um controle à parte (antes espelhava a 1)
   return g_buttons[id] || (g_menu_hold > 0 && (g_menu_mask >> id & 1));
@@ -167,8 +168,15 @@ static void cart_frame(void) {
   if (!dump_init) { dump_init = true; if (const char *f = getenv("CICLONE_CART_PCM")) dump = fopen(f, "wb"); }
   if (dump) { fwrite(g_cart.data(), 2, g_cart.size(), dump); fflush(dump); }
 }
+// CICLONE_PORT1=mouse: a non-standard controller in port 1 (its ID nibble is what the hooks and
+// the in-game menu have to tell apart from a pad). bsnes puts its configured device back on every
+// reset, so this runs after each one.
+static void apply_port1(void) {
+  if (const char *p1 = getenv("CICLONE_PORT1"))
+    if (!strcmp(p1, "mouse")) snes_set_controller_port_device(SNES_PORT_1, SNES_DEVICE_MOUSE);
+}
 static void snes_frame(void) {
-  if (ciclone_snes_reset_edge) { ciclone_snes_reset_edge = 0; snes_reset(); }
+  if (ciclone_snes_reset_edge) { ciclone_snes_reset_edge = 0; snes_reset(); apply_port1(); }
   if (!ciclone_snes_in_reset) {
     snes_run();
     if (g_audio_level && g_level_n) {
@@ -574,6 +582,7 @@ int main(int argc, char **argv) {
     static const uint8_t dummy[1024] = {0};
     const char *manifest = "<cartridge><sd2snes/></cartridge>";
     if (!snes_load_cartridge_normal(manifest, dummy, sizeof(dummy))) { fprintf(stderr, "load falhou\n"); return 1; }
+    apply_port1();
     if (serve) serve_loop(m);
     if (gui) { run_gui("Ciclone - sd2snes (firmware REAL + FpgaModel)"); }
     else { for (int i = 0; i < frames; i++) run_scripted_frame(i); write_ppm(outpath, frames); }
