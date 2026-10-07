@@ -228,6 +228,14 @@ class Menu:
         self.sym = Symbols()
         self.fwlog_path = workdir / "fw.log"
         env = dict(os.environ, CICLONE_FIXED_TIME=fixed_time, **(env or {}))   # e.g. CICLONE_TRACE_APU
+        if os.environ.get("CICLONE_RECORD_DIR"):   # tools/record_suite.py: the run on video, with sound
+            env["CICLONE_RECORD"] = str(workdir / "rec")
+            # which of run.py's parallel workers ran it, and when: the video is one quadrant per worker
+            import json
+            import threading
+            slot = re.findall(r"_(\d+)$", threading.current_thread().name)
+            (workdir / "rec.json").write_text(json.dumps({"slot": int(slot[0]) if slot else 0,
+                                                          "t0": time.time()}))
         self.err = open(workdir / "runner.err", "w")
         self.proc = subprocess.Popen([str(RUNNER), "--serve", "--fwlog", str(self.fwlog_path), str(sd)],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.err,

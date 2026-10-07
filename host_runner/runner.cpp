@@ -181,7 +181,52 @@ static void snes_frame(void) {
   }
   cart_frame();
 }
-static void paced_run(void) { snes_frame(); pace((double)g_frame + 1); }
+// CICLONE_RECORD=<prefix> (--serve): every emulated frame goes to <prefix>.video.mp4 (an ffmpeg
+// pipe, 512x448 at the console's 60.0988 Hz) and its sound to <prefix>.pcm (raw 32040 Hz
+// stereo 16-bit: the S-SMP mixed with the cartridge's DAC, the window's mix). Emulated time,
+// so the recording plays at the console's speed whatever CICLONE_SPEED did to the wall clock.
+static FILE *g_rec_v = nullptr, *g_rec_a = nullptr;
+static std::vector<uint8_t> g_rec_buf;
+static void record_open(void) {
+  const char *pre = getenv("CICLONE_RECORD");
+  if (!pre || !*pre) return;
+  std::string cmd = std::string("ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgb24 -s 512x448 "
+                                "-r 60.0988 -i - -c:v libx264 -preset veryfast -crf 20 "
+                                "-pix_fmt yuv420p '") + pre + ".video.mp4'";
+  g_rec_v = popen(cmd.c_str(), "w");
+  g_rec_a = fopen((std::string(pre) + ".pcm").c_str(), "wb");
+  g_rec_buf.assign(512 * 448 * 3, 0);
+  g_audio_on = true;
+}
+static void record_frame(void) {
+  if (!g_rec_v) return;
+  if (g_w) {                    // 256 or 512 wide, 224/239 or 448/478 high: scaled to 512x448
+    for (unsigned y = 0; y < 448; y++) {
+      unsigned sy = g_h >= 448 ? y : y / 2;
+      if (sy >= g_h) { memset(&g_rec_buf[(size_t)y * 512 * 3], 0, 512 * 3); continue; }
+      for (unsigned x = 0; x < 512; x++) {
+        unsigned sx = g_w >= 512 ? x : x / 2;
+        memcpy(&g_rec_buf[((size_t)y * 512 + x) * 3], &g_rgb[((size_t)sy * g_w + sx) * 3], 3);
+      }
+    }
+  }
+  fwrite(g_rec_buf.data(), 1, g_rec_buf.size(), g_rec_v);
+  size_t n = g_audio.size() / 2, got = g_cart.size() / 2;
+  for (size_t i = 0; i < n && got; i++) {       // the cart's 44100 Hz onto the S-SMP's 32040
+    size_t j = i * got / n;
+    for (int c = 0; c < 2; c++) {
+      int v = g_audio[2 * i + c] + g_cart[2 * j + c] * 3 / 4;
+      g_audio[2 * i + c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+  }
+  fwrite(g_audio.data(), sizeof(int16_t), g_audio.size(), g_rec_a);
+  g_audio.clear();
+}
+static void record_close(void) {
+  if (g_rec_v) { pclose(g_rec_v); g_rec_v = nullptr; }
+  if (g_rec_a) { fclose(g_rec_a); g_rec_a = nullptr; }
+}
+static void paced_run(void) { snes_frame(); record_frame(); pace((double)g_frame + 1); }
 
 // CICLONE_TRACE_APU=<file>: every S-CPU write to the APU ports $2140-$2143, one line each:
 //   <frame> <V>:<H> <port> <value> pc=<PB:PC> s=<S> ret=<the 12 bytes above S>
@@ -306,6 +351,7 @@ static void parse_shots(const char *arg) {
 //   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam aram psram snescmd -> ok <hex>
 //   sdstat              leituras do cartão até agora: setores reinícios -> ok <n> <n>
 //   shot PATH           grava o último quadro em PPM             -> ok
+// CICLONE_RECORD=<prefixo>: grava o run inteiro (vídeo + som), ver record_open
 //   quit
 static FILE *g_proto = nullptr;
 
@@ -313,6 +359,7 @@ static void serve_loop(ciclone::FpgaModel *m) {
   char line[1024];
   g_speed = 4.0;
   if (const char *sp = getenv("CICLONE_SPEED")) g_speed = atof(sp);
+  record_open();
   fprintf(g_proto, "ready\n"); fflush(g_proto);
   while (fgets(line, sizeof line, stdin)) {
     char cmd[32] = {0};
@@ -374,12 +421,14 @@ static void serve_loop(ciclone::FpgaModel *m) {
       write_ppm(path, (int)g_frame);
       fprintf(g_proto, "ok\n");
     } else if (!strcmp(cmd, "quit")) {
+      record_close();
       fprintf(g_proto, "ok\n"); fflush(g_proto); fflush(stdout); _exit(0);
     } else {
       fprintf(g_proto, "err unknown %s\n", cmd);
     }
     fflush(g_proto);
   }
+  record_close();
   fflush(stdout);
   _exit(0);   // stdin fechou (harness morreu): a thread da firmware nunca retorna
 }
