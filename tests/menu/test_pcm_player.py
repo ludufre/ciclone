@@ -82,11 +82,14 @@ def test_game_info_plays_its_clip_and_music(t):
     m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has("Clip Probe"), what="a ficha")
     assert m.psram(GI + 3, 1)[0] & 0x02, "clipe não estagiado"
     seen = set()
-    for _ in range(60):                             # o menu pede os quadros seguintes (FMV_NEXT)
+    # o menu pede os quadros seguintes (FMV_NEXT). Passo de 7 quadros do SNES, nao 10: o clipe
+    # tem 4 quadros a 12 fps, e 10 quadros do SNES sao 2 do clipe em tempo real -- a amostra so
+    # via os quadros 0 e 2, alternando
+    for _ in range(90):
         seen.add(m.psram(TILES, 1)[0])
         if len(seen) >= 3:
             break
-        m.step(10)
+        m.step(7)
     assert len(seen) >= 3, f"o clipe não andou: {sorted(seen)}"
     assert "cmd: 55" in m.fwlog()                   # SNES_CMD_FMV_NEXT ($37)
     m.wait(lambda: m.dac_playing(), what="a música do clipe")
