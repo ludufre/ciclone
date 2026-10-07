@@ -20,6 +20,7 @@ G2S, S2G, SLOT_TILE, TOFU, LANG_CUR, MODE = 0x7F0000, 0x7F0300, 0x7F0680, 0x7F09
 LANG_SHEET = 0x7F2008
 GI_CJK_SHEET = 0xCBC000
 NSLOTS = 224
+G2S2, S2G2, NSLOTS2 = 0x7F1100, 0x7F1400, 128
 HEADER_ROWS = 9
 
 
@@ -32,7 +33,20 @@ def _slots(m):
     return {s: (s2g[2 * s] | s2g[2 * s + 1] << 8) - 1 for s in range(NSLOTS) if s2g[2 * s] | s2g[2 * s + 1]}
 
 
+def _glyph64(m, g, sheet, lang_sheet):
+    if g < 128:
+        return m.psram(sheet + g * 64, 64)                       # resident sheet
+    if g < 640:
+        return _w(m, 0x7F0000 + lang_sheet + (g - 128) * 64, 64)  # the language's, in WRAM
+    return m.psram(GI_CJK_SHEET + (g - 640) * 64, 64)            # a game's text, by the firmware
+
+
 def _check(m, tag, body_from=HEADER_ROWS):
+    for _ in range(120):                          # the NMI sends what is queued, a few a frame
+        if not _w(m, 0x7F0940, 1)[0]:
+            break
+        m.step(1)
+    assert not _w(m, 0x7F0940, 1)[0], f"{tag}: glyphs still queued for VRAM after 120 frames"
     vram = m.peek("vram", 0, 0x10000)
     g2s = _w(m, G2S, 768)
     st = _w(m, SLOT_TILE, NSLOTS * 2)
@@ -45,12 +59,7 @@ def _check(m, tag, body_from=HEADER_ROWS):
         assert g2s[g] == s + 1, f"{tag}: slot {s} -> glyph {g} -> {g2s[g] - 1}"
         tile = st[2 * s] | st[2 * s + 1] << 8
         bound.add(tile)
-        if g < 128:
-            want = m.psram(sheet + g * 64, 64)                      # resident sheet
-        elif g < 640:
-            want = _w(m, 0x7F0000 + lang_sheet + (g - 128) * 64, 64)  # the language's, in WRAM
-        else:
-            want = m.psram(GI_CJK_SHEET + (g - 640) * 64, 64)       # a game's text, by the firmware
+        want = _glyph64(m, g, sheet, lang_sheet)
         got = vram[tile * 32:tile * 32 + 64]
         assert got == want, f"{tag}: slot {s} (glyph {g}, tile {tile:#x}) VRAM != sheet"
     bg1 = m.wram(0x7EB000, 0x1000)
@@ -58,9 +67,31 @@ def _check(m, tag, body_from=HEADER_ROWS):
         tile = (bg1[i] | bg1[i + 1] << 8) & 0x3FF
         if tile in slot_tiles and tile not in bound:
             raise AssertionError(f"{tag}: row {i // 64} shows tile {tile:#x}, a free slot")
+    # the BG2 pool: a glyph starting on an even column, in a BG2 cell of the maps' lower screens
+    g2s2 = _w(m, G2S2, 768)
+    s2g2 = _w(m, S2G2, 2 * NSLOTS2)
+    bound2 = set()
+    for s in range(NSLOTS2):
+        v = s2g2[2 * s] | s2g2[2 * s + 1] << 8
+        if not v:
+            continue
+        g = v - 1
+        assert g2s2[g] == s + 1, f"{tag}: BG2 slot {s} -> glyph {g} -> {g2s2[g] - 1}"
+        tile = 640 + 2 * s if s < 64 else 768 + 2 * s
+        bound2.add(tile)
+        want = _glyph64(m, g, sheet, lang_sheet)
+        got = vram[(0x4000 + 8 * tile) * 2:(0x4000 + 8 * tile) * 2 + 32]
+        assert got == want[0:16] + want[32:48], (f"{tag}: BG2 slot {s} (glyph {g}) VRAM != sheet\n"
+            f"right half found at word {[hex(i//2) for i in range(0,len(vram)-16,2) if vram[i:i+16]==want[32:48]][:5]} tile {tile} slot word {0x4000+8*tile:#x}\n"
+            f"got  {got.hex()}\nwant {(want[0:16] + want[32:48]).hex()}\ndirty {_w(m, 0x7F1500, 8).hex()} nd {_w(m, 0x7F0940, 1).hex()}")
+    bg2 = m.wram(0x7EA000, 0x1000)
+    for i in range(64 * body_from, 64 * 32, 2):
+        tile = (bg2[i] | bg2[i + 1] << 8) & 0x3FF
+        if (640 <= tile < 768 or tile >= 896) and not tile & 1 and tile not in bound2:
+            raise AssertionError(f"{tag}: BG2 row {i // 64} shows tile {tile:#x}, a free BG2 cell")
     tofu = _w(m, TOFU, 1)[0]
     assert tofu == 0, f"{tag}: {tofu} glyph(s) printed as '?' (no slot free)"
-    return len(slots)
+    return len(slots) + len(bound2)
 
 
 def _walk_settings(m):
@@ -74,7 +105,7 @@ def _walk_settings(m):
     m.press("A")                                  # Settings
     m.settle()
     last, shrank = _check(m, "settings"), 0
-    for i in range(1, 9):                         # its submenus (rows 1..8)
+    for i in range(1, 8):                         # its submenus (rows 1..7; row 8 runs the tour)
         m.press("DOWN"); m.step(4)
         m.press("A"); m.settle()
         for j in range(14):
@@ -162,3 +193,88 @@ def test_japanese_game_text_from_the_yml(t):
     m.settle()
     _check(m, "full description", body_from=16)
     m.shot(t.dir / "game_info_ja_full.png")
+
+
+def _lang_edit(m, btn, n):
+    """Main menu's Language row: open the value, n x btn, commit."""
+    m.press("A"); m.settle()
+    for _ in range(n):
+        m.press(btn, hold=6, after=6); m.step(20)
+    m.press("A"); m.settle()
+
+
+def test_language_change_out_of_and_into_cjk(t):
+    """Japanese -> English -> Japanese from the main menu. The menu must stay responsive
+    (a waitblank-style wait used to starve when the NMI ran past the end of VBlank)."""
+    m = t.menu(t.sd(config=f"---\nLanguage: {LANG_JA}\n"))
+    m.press("X"); m.settle()
+    for _ in range(5):
+        m.press("DOWN"); m.step(3)
+    _lang_edit(m, "DOWN", 8)                       # ja -> nl ... -> en
+    assert m.u8("cur_lang") == 0, f"commit left cur_lang {m.u8('cur_lang')}"
+    assert m.has(c.tr("text_mainmenu")), m.text()
+    for _ in range(8):                             # the bar back on the Language row
+        if "Language" in m.bar_row():
+            break
+        m.press("DOWN"); m.step(4)
+    _lang_edit(m, "UP", 8)                         # en -> ... -> ja (loads its file)
+    assert m.u8("cur_lang") == LANG_JA and _w(m, LANG_CUR, 1)[0] == LANG_JA, \
+        f"cur_lang {m.u8('cur_lang')} file {_w(m, LANG_CUR, 1)[0]}"
+    assert _check(m, "back in Japanese") > 10
+    m.press("UP"); m.step(10)                      # still answering the pad
+    m.press("B"); m.settle()
+    assert m.u16("window_stack_head") == 0xFFFF, f"the menu did not close ({m.u16('window_stack_head'):#x})"
+
+
+def test_list_cover_with_a_full_cache(t):
+    """Favorites with a cover after a walk that filled region A with glyphs no longer shown:
+    the cover takes region B, so the list title's glyphs there must move to A -- freeing A
+    slots nothing shows first. Without that they were dropped and the title showed the cover's
+    tiles (seen on a Mk.III)."""
+    sd = t.sd(config=f"---\nLanguage: {LANG_JA}\n",
+              extra={"/sd2snes/favorites.cfg": b"/Test Game.sfc\n",
+                     "/Test Game.cov": _cov(6, 8)})
+    m = t.menu(sd)
+    _walk_settings(m)
+    a_bound = sum(1 for s in _slots(m) if s < 96)
+    m.settle()
+    m.press("SEL")
+    m.wait(lambda: m.u16("window_stack_head") != 0xFFFF, frames=300, what="the favorites list")
+    m.wait(lambda: m.u8("cover_loaded") == 1, frames=600, what="the favorite's cover")
+    m.settle()
+    _check(m, f"favorites with a cover (A had {a_bound} bound)")
+    m.shot(t.dir / "favorites_cover.png")
+
+
+def _cell_left_of_window(m):
+    """Rows of the drawn window whose column window_x-1 starts a glyph cell (it would spill
+    onto the window's left border)."""
+    x, y, h = m.u8("window_x"), m.u8("window_y"), m.u8("window_h")
+    c = x - 1
+    buf = m.wram(0x7EB000 if c & 1 else 0x7EA000, 0x1000)
+    bad = []
+    for r in range(y, y + h):
+        tile = (buf[r * 64 + (c & ~1)] | buf[r * 64 + (c & ~1) + 1] << 8) & 0x3FF
+        if (c & 1 and 0x200 <= tile < 0x400 and not tile & 1) or \
+           (not c & 1 and (640 <= tile < 768 or tile >= 896) and not tile & 1):
+            bad.append((r, hex(tile)))
+    return bad
+
+
+def test_window_border_hides_the_glyph_it_cuts(t):
+    """System Information opens over the main menu at an even column: the first glyph of the
+    main menu's title sat in the column just left of it, half under the new border. It is
+    blanked while the window is up and comes back when it closes."""
+    m = t.menu(t.sd(config=f"---\nLanguage: {LANG_JA}\n"))
+    m.press("X"); m.settle()
+    m.press("DOWN"); m.step(4); m.press("DOWN"); m.settle()
+    before = m.wram(0x7EA000, 0x1000) + m.wram(0x7EB000, 0x1000)
+    m.press("A"); m.settle(); m.step(30)
+    assert m.u8("window_x") == 10, f"System Information moved: window_x {m.u8('window_x')}"
+    assert not _cell_left_of_window(m), _cell_left_of_window(m)
+    _check(m, "system information")
+    m.press("B"); m.settle()
+    after = m.wram(0x7EA000, 0x1000) + m.wram(0x7EB000, 0x1000)
+    title = [i for i in range(0, 0x2000, 64) if before[i:i + 64] != after[i:i + 64]]
+    assert not title, f"rows not restored after closing: {[((i % 0x1000) // 64, i // 0x1000) for i in title][:8]}"
+    _check(m, "back to the main menu")

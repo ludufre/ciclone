@@ -24,6 +24,7 @@ LANG_JA, LANG_ZH = 8, 9
 W = 0x7E0000
 G2S, S2G, OCJ_LANG, TOFU, LO, HI = 0x7F4000, 0x7F4300, 0x7F4501, 0x7F4502, 0x7F4504, 0x7F4506
 NSLOTS = 128
+S2K = 0x7F4600
 BG2_TILE_BUF = 0x7EA000
 SHOTS = os.environ.get("ONB_SHOTS")
 
@@ -57,15 +58,22 @@ def _check(m, tag, lang=None):
     vram = m.peek("vram", 0, 0x10000)
     g2s = _w(m, G2S, 768)
     s2g = _w(m, S2G, 2 * NSLOTS)
+    s2k = _w(m, S2K, 2 * NSLOTS)
     bound = {}
     for s in range(NSLOTS):
         v = s2g[2 * s] | s2g[2 * s + 1] << 8
         if not v:
             continue
-        g = v - 1
-        assert g2s[g] == s + 1, f"{tag}: slot {s} -> glyph {g} -> {g2s[g] - 1}"
         t = _slot_tile(s)
         got = vram[(0x4000 + 8 * t) * 2:(0x4000 + 8 * t) * 2 + 32]
+        if v & 0x8000:                             # a pair cell: right half of a, left of b
+            a, b = v & 0x7FFF, s2k[2 * s] | s2k[2 * s + 1] << 8
+            want = (_want(a - 1, lang)[16:] if a else bytes(16)) + (_want(b - 1, lang)[:16] if b else bytes(16))
+            assert got == want, f"{tag}: pair slot {s} ({a - 1}, {b - 1}) VRAM != its halves"
+            bound[t] = (a, b)
+            continue
+        g = v - 1
+        assert g2s[g] == s + 1, f"{tag}: slot {s} -> glyph {g} -> {g2s[g] - 1}"
         assert got == _want(g, lang), f"{tag}: slot {s} (glyph {g}) VRAM != its glyph"
         bound[t] = g
     bg2 = _w(m, BG2_TILE_BUF, 28 * 64)
