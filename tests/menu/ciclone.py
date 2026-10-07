@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = Path(os.environ.get("CICLONE_RUNNER") or ROOT / "build" / "host_runner_fw")   # COVERAGE=1 troca pelo instrumentado
 MENU_DIR = Path(os.environ.get("CICLONE_MENU", ROOT / "build" / "menu"))
-SD2SNES = ROOT / "extern" / "sd2snes"   # a árvore da firmware (src/, snes/, verilog/)
+SD2SNES = Path(os.environ.get("CICLONE_TREE") or ROOT / "extern" / "sd2snes")   # a árvore da firmware (src/, snes/, verilog/)
 FIXED_TIME = "2026-01-02 03:04:05"
 
 BUTTONS = {"B": 0, "Y": 1, "SEL": 2, "START": 3, "UP": 4, "DOWN": 5, "LEFT": 6, "RIGHT": 7,
@@ -139,7 +139,8 @@ def encode_menu_text(s: str) -> str:
 
 # ---------------------------------------------------------------- cartão (imagem FAT32)
 def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra: dict | None = None,
-            onboarding: bool = True, misc: bool = False, lang: bool = True) -> Path:
+            onboarding: bool = True, misc: bool = False, lang: bool = True,
+            size_mb: int | None = None, cluster: int | None = None) -> Path:
     """Imagem do cartão com o menu do pacote. `config` = conteúdo do config.yml inicial;
     `extra` = {caminho no cartão: bytes} gravados por cima da árvore de teste;
     `onboarding=False` deixa o onboarding.bin (ROM do tour) fora do cartão;
@@ -150,6 +151,11 @@ def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra:
     env = dict(os.environ, M3NU=str(MENU_DIR / "m3nu.bin"), IGMENU=str(MENU_DIR / "igmenu.bin"),
                SD_FIXTURES="1" if fixtures else "0", SD_NO_ONBOARDING="0" if onboarding else "1",
                SD_MISC="1" if misc else "0", SD_NO_LANG="0" if lang else "1")
+    # `size_mb`/`cluster` (sectors per cluster): a card shaped like a real one (64 = 32 KB)
+    if size_mb:
+        env["SIZE_MB"] = str(size_mb)
+    if cluster:
+        env["SD_CLUSTER"] = str(cluster)
     # The first-boot tour prompt would sit over the browser in every test: a card is
     # "already onboarded" (any tour version: 255) unless the test's config names the
     # key itself.
@@ -279,6 +285,12 @@ class Menu:
 
     def release(self, pad: int = 1):
         self.hold(pad=pad)
+
+    def sdstat(self) -> tuple[int, int]:
+        """Card reads so far: (sectors, stream restarts). A restart is a sector that does not follow
+        the previous read, the costly case of the real SD driver."""
+        a, b = self._cmd("sdstat").split()
+        return int(a), int(b)
 
     def menu_combo(self) -> tuple[str, ...]:
         """The in-game menu combo the firmware armed for the loaded game -- what the window's

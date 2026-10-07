@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/extern/sd2snes/src"
+SRC="${CICLONE_TREE:-$ROOT/extern/sd2snes}/src"   # CICLONE_TREE: another firmware tree (its _repo)
 HAL="$ROOT/hal_host"
 INC="$ROOT/include"
 FPGA="$ROOT/fpga_model"

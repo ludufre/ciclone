@@ -48,6 +48,8 @@ int      ciclone_sd_read(uint32_t lba, uint8_t *buf, uint32_t count);   /* 0=ok 
 int      ciclone_sd_write(uint32_t lba, const uint8_t *buf, uint32_t count);
 uint32_t ciclone_sd_sectorcount(void);
 int      ciclone_sd_open(const char *path);  /* monta a imagem; 0=ok */
+/* leituras acumuladas: setores e reinícios de stream (setor fora de sequência) */
+void     ciclone_sd_stats(uint64_t *sectors, uint64_t *restarts);
 
 #ifdef __cplusplus
 }

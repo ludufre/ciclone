@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 SERVER="${SERVER:?defina SERVER=user@host (host de build com snescom/sneslink), no env ou no .ciclone.env}"
 SERVER_DIR="${SERVER_DIR:-ciclone-menu}"
 DEST="${1:-build/menu}"
-SRC="extern/sd2snes"
+SRC="${CICLONE_TREE:-extern/sd2snes}"   # CICLONE_TREE: another firmware tree (its _repo)
 [ -d "$SRC/snes" ] || { echo "sem $SRC/snes (rode tools/setup.sh)"; exit 1; }
 REPO="$SRC"
 if [ -n "${REF:-}" ]; then

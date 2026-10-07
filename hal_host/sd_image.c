@@ -5,11 +5,25 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #define SECTOR_SIZE 512u
 
 static FILE    *g_img;
 static uint32_t g_sectors;
+
+/* Read statistics, for tests that measure how much card traffic a menu action costs.
+   A restart is what lpc175x/sdnative.c read_block pays when a sector is NOT the one right
+   after the previous read (stop + a new multi-block read command + the card's access time);
+   a sequential sector just streams. A write ends the read stream, as it does there. */
+static uint64_t g_rd_sectors, g_rd_restarts;
+static uint32_t g_rd_last;
+static int      g_rd_streaming;
+
+void ciclone_sd_stats(uint64_t *sectors, uint64_t *restarts) {
+  *sectors = g_rd_sectors;
+  *restarts = g_rd_restarts;
+}
 
 int ciclone_sd_open(const char *path) {
   if (g_img) { fclose(g_img); g_img = NULL; g_sectors = 0; }
@@ -28,6 +42,21 @@ uint32_t ciclone_sd_sectorcount(void) { return g_sectors; }
 
 int ciclone_sd_read(uint32_t lba, uint8_t *buf, uint32_t count) {
   if (!g_img) return 1;
+  /* CICLONE_SD_TRACE=<file>: one line per read, "lba count" */
+  static FILE *trace;
+  static int trace_init;
+  if (!trace_init) {
+    trace_init = 1;
+    const char *t = getenv("CICLONE_SD_TRACE");
+    if (t && *t) trace = fopen(t, "w");
+  }
+  if (trace) { fprintf(trace, "%u %u\n", lba, count); fflush(trace); }
+  for (uint32_t i = 0; i < count; i++) {
+    if (!g_rd_streaming || lba + i != g_rd_last + 1) g_rd_restarts++;
+    g_rd_last = lba + i;
+    g_rd_streaming = 1;
+  }
+  g_rd_sectors += count;
   if (fseek(g_img, (long)lba * SECTOR_SIZE, SEEK_SET) != 0) return 1;
   size_t want = (size_t)count * SECTOR_SIZE;
   size_t got = fread(buf, 1, want, g_img);
@@ -40,6 +69,7 @@ int ciclone_sd_read(uint32_t lba, uint8_t *buf, uint32_t count) {
 
 int ciclone_sd_write(uint32_t lba, const uint8_t *buf, uint32_t count) {
   if (!g_img) return 1;
+  g_rd_streaming = 0;
   if (fseek(g_img, (long)lba * SECTOR_SIZE, SEEK_SET) != 0) return 1;
   size_t want = (size_t)count * SECTOR_SIZE;
   size_t put = fwrite(buf, 1, want, g_img);

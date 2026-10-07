@@ -49,7 +49,8 @@ class T:
             print(f"    [{self.name}]", *a, flush=True)
 
     def sd(self, config: str | None = None, extra: dict | None = None, fixtures: bool = True,
-           onboarding: bool = True, misc: bool = False, lang: bool = True) -> Path:
+           onboarding: bool = True, misc: bool = False, lang: bool = True,
+           size_mb: int | None = None, cluster: int | None = None) -> Path:
         """Imagem do cartão só deste teste (clone APFS de um template em cache)."""
         h = hashlib.sha1()
         h.update((c.MENU_DIR / "m3nu.bin").read_bytes())
@@ -61,7 +62,7 @@ class T:
             for f in sorted((c.SD2SNES / "misc").glob("*")):
                 if f.is_file():
                     h.update(f.read_bytes())
-        h.update(repr((config, fixtures, onboarding, misc, lang, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
+        h.update(repr((config, fixtures, onboarding, misc, lang, size_mb, cluster, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
         for f in ("tools/make_sdimg.sh", "tools/sd_fixtures.py", "tests/menu/ciclone.py"):
             h.update((c.ROOT / f).read_bytes())
         for f in ("savestate_inputs.yml", "savestate_fixes.yml"):     # copied onto every card
@@ -71,7 +72,7 @@ class T:
         with _sd_lock:
             if not tpl.exists():
                 c.make_sd(tpl.with_suffix(".tmp.img"), config=config, fixtures=fixtures, extra=extra,
-                          onboarding=onboarding, misc=misc, lang=lang)
+                          onboarding=onboarding, misc=misc, lang=lang, size_mb=size_mb, cluster=cluster)
                 tpl.with_suffix(".tmp.img").rename(tpl)
         self._n += 1
         dst = self.dir / f"sd{self._n}.img"
@@ -115,7 +116,15 @@ def discover(pattern: str | None):
     for f in sorted(HERE.glob("test_*.py")):
         spec = importlib.util.spec_from_file_location(f.stem, f)
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as e:    # a module this firmware tree cannot load: a failure of its
+            if pattern and pattern not in f.stem:   # own, never of the tests -k picked elsewhere
+                continue
+            def broken(t, e=e):
+                raise e
+            tests.append((f"{f.stem}.<import>", broken, 0))
+            continue
         for name, fn in inspect.getmembers(mod, inspect.isfunction):
             if name.startswith("test_") and fn.__module__ == mod.__name__:
                 full = f"{f.stem}.{name}"

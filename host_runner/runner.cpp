@@ -304,6 +304,7 @@ static void parse_shots(const char *arg) {
 //   buttons MASK        segura os botões (hex, bit = id libsnes) -> ok
 //   menumask            o combo do menu in-game armado agora (a tecla M da janela) -> ok <hex>
 //   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam aram psram snescmd -> ok <hex>
+//   sdstat              leituras do cartão até agora: setores reinícios -> ok <n> <n>
 //   shot PATH           grava o último quadro em PPM             -> ok
 //   quit
 static FILE *g_proto = nullptr;
@@ -360,6 +361,10 @@ static void serve_loop(ciclone::FpgaModel *m) {
     } else if (!strcmp(cmd, "dac")) {       // the MSU-1 DAC buffer: playing, read and write pointers
       ciclone_model_lock(); int on = m->dac_playing(), loud = m->dac_loud(); ciclone_model_unlock();
       fprintf(g_proto, "ok %d %d\n", on, loud); fflush(g_proto);
+    } else if (!strcmp(cmd, "sdstat")) {    // card reads so far: sectors and stream restarts
+      uint64_t sec = 0, rst = 0;
+      ciclone_sd_stats(&sec, &rst);
+      fprintf(g_proto, "ok %llu %llu\n", (unsigned long long)sec, (unsigned long long)rst); fflush(g_proto);
     } else if (!strcmp(cmd, "shot")) {
       char path[900] = {0}; sscanf(line, "shot %899s", path);
       write_ppm(path, (int)g_frame);

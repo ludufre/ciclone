@@ -10,15 +10,18 @@ IMG="${1:-$ROOT/build/sdcard.img}"
 MENU_DIR="$(bash "$ROOT/tools/menu_dir.sh")"
 M3NU="${M3NU:-$MENU_DIR/m3nu.bin}"
 SIZE_MB="${SIZE_MB:-48}"   # >= ~32 MB so newfs_msdos picks FAT32
+# SD_CLUSTER=<sectors per cluster>: a real card's geometry (64 = the 32 KB of a large FAT32
+# card). FAT32 needs >= 65525 clusters, so 64 asks for SIZE_MB >= 2100 (the image is sparse).
+SD_CLUSTER="${SD_CLUSTER:-}"
 
 [ -f "$M3NU" ] || { echo "sem m3nu.bin ($M3NU): builde a firmware ou rode tools/build_menu.sh"; exit 1; }
 echo "menu: $M3NU"
 mkdir -p "$(dirname "$IMG")"
 rm -f "$IMG"
-dd if=/dev/zero of="$IMG" bs=1m count="$SIZE_MB" 2>/dev/null
+dd if=/dev/zero of="$IMG" bs=1m count=0 seek="$SIZE_MB" 2>/dev/null   # sparse
 
 DEV="$(hdiutil attach -nomount "$IMG" 2>/dev/null | head -1 | awk '{print $1}')"
-newfs_msdos -F 32 -v SD2SNES "$DEV" >/dev/null 2>&1
+newfs_msdos -F 32 ${SD_CLUSTER:+-c "$SD_CLUSTER"} -v SD2SNES "$DEV" >/dev/null 2>&1
 hdiutil detach "$DEV" >/dev/null 2>&1
 
 # the mount point comes from attach's own output (last tab field): `df | grep $DEV` can match
