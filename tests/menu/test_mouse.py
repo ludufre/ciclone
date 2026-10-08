@@ -385,9 +385,10 @@ def test_game_info_shows_the_pointer_and_hides_it_when_idle(t):
     m = _ficha(t)
     _point(m, 120, 100, after=3)
     x, y, tile, attr = _oam(m)
-    assert (x, y, tile, attr) == (120, 99, 0xFF, 0x3F), _oam(m)
+    assert (x, y, tile, attr) == (120, 99, 0xFF, 0x31), _oam(m)   # OBJ palette 0
     assert any(m.peek("vram", 0x5FF0 * 2, 32)), "o tile do ponteiro não foi para $5FF0"
-    assert m.peek("cgram", 0xF1 * 2, 4) == b"\x00\x00\xff\x7f", m.peek("cgram", 0xF1 * 2, 4)
+    # no cover: OBJ palette 0 is free, the pointer gets black (1) and white (2) of its own
+    assert m.peek("cgram", 0x81 * 2, 4) == b"\x00\x00\xff\x7f", m.peek("cgram", 0x81 * 2, 4)
     assert all(m.peek("oam", i * 4 + 1, 1)[0] >= 0xE0 for i in range(64)), "sobrou sprite da capa"
     m.step(150)
     assert _oam(m)[1] >= 0xE0, _oam(m)
@@ -416,9 +417,9 @@ def test_game_info_footer_click_presses_its_key(t):
 
 
 def test_game_info_clip_and_pointer_share_the_palette_without_flicker(t):
-    """With a .fmv the pointer takes the darkest and brightest of each clip frame's OBJ
-    palette 7 when the frame's palette goes up (gi_fmv_advance), so the clip never flips
-    between two palettes; the rest of the palette is the frame's own. No other sprite."""
+    """With a .fmv the pointer and the buttons take the darkest and brightest of each clip
+    frame's OBJ palette 7 when the frame's palette goes up (gi_fmv_advance); a mid-tone clip
+    is not touched. No other sprite."""
     from test_pcm_player import _fmv, PCM
     sd = t.sd(extra={"/sd2snes/info/TE/Test Game.yml": b'---\ntitle: "Clip Probe"\nfmv: true\n',
                      "/sd2snes/info/TE/Test Game.fmv": _fmv(8),
@@ -432,24 +433,14 @@ def test_game_info_clip_and_pointer_share_the_palette_without_flicker(t):
         m.step(1)
     o, b = m.u8("mouse_cgo"), m.u8("mouse_cgb")
     assert o != b and m.u8("mouse_fsetup") == 1, (o, b)
-    # Sampled at the frame boundary the emulator may stop inside the clip's upload window,
-    # between its palette DMA and mouse_fmv_pal; outside it the palette is the frame's own
-    # with exactly the pointer's two entries black and white.
-    for _ in range(20):
-        cg = m.peek("cgram", 168 * 2, 176)
-        if cg[2 * (72 + o):2 * (72 + o) + 2] == b"\x00\x00":
-            break
-        m.mouse(1, 0)
-        m.step(1)
-    want = cg[0:2]                                # the test clip: one colour per frame
-    for k in range(88):
-        got = cg[2 * k:2 * k + 2]
-        if k == 72 + o:
-            assert got == b"\x00\x00", (k, got)
-        elif k == 72 + b:
-            assert got == b"\xff\x7f", (k, got)
-        else:
-            assert got == want, (k, got, want)
+    # The test clip's colours are mid tones: the pointer wears the frame's own darkest and
+    # brightest and the clip's palette stays exactly the frame's (no black / white forced).
+    cg = m.peek("cgram", 168 * 2, 176)
+    want = cg[0:2]
+    assert all(cg[2 * k:2 * k + 2] == want for k in range(88)), cg.hex()
+    # the buttons' halves went up with the arrow, on the same two entries
+    tiles = m.peek("vram", 0x5FD0 * 2, 96)
+    assert any(tiles[:64]) and any(tiles[64:]), tiles.hex()
     oam = m.peek("oam", 0, 512)
     shown = [i for i in range(128) if oam[4 * i + 1] < 224]
     assert shown == list(range(SLOT, SLOT + 9)), shown   # the arrow + the two buttons
@@ -502,3 +493,105 @@ def test_game_info_previous_next_buttons(t):
     _point(m, 4 + 8, 56 + 8)                      # the previous one
     m.mouse_click("left")
     m.wait(lambda: m.has("msugame"), what="a ficha de volta")
+
+
+YML = "/sd2snes/cheats/TE/Test Game.yml"
+CHT = (b'---\n- Name: "First"\n  Enabled: false\n  Code:\n  - "7E1F2A00"\n'
+       b'- Name: "Second"\n  Enabled: false\n  Code:\n  - "7E0DBF09"\n')
+
+
+def _both(m, port: int = 1):
+    m.mouse(left=True, right=True, port=port)
+    m.step(4)
+    m.mouse(port=port)
+    m.step(4)
+
+
+def test_game_info_both_buttons_open_the_cheat_list(t):
+    m = t.menu(t.sd(extra={YML: CHT}), env=MOUSE)
+    _point_row(m, "Test Game.sfc")
+    m.mouse_click("left")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="a ficha")
+    m.settle()
+    footer = m.screen()[26]
+    assert "\u24b7Cheats" in footer, footer       # both = Sel here (X keeps its letter)
+    _both(m)
+    m.wait(lambda: m.has("First"), what="a lista de cheats")
+
+
+def _cheat_list_mouse(t):
+    m = t.menu(t.sd(extra={YML: CHT}), env=MOUSE)
+    _point_row(m, "Test Game.sfc")
+    _hold_right(m)
+    m.settle()
+    cheats = c.tr("text_filesel_context_cheats")
+    y = m.row_of(cheats)
+    _point(m, m.u8("window_x") * 4 + 24, 8 * y - 9)
+    m.mouse_click("left")
+    m.wait_text("First")
+    m.settle()
+    return m
+
+
+def test_cheat_list_both_buttons_add(t):
+    m = _cheat_list_mouse(t)
+    _both(m)
+    m.settle()
+    assert m.u8("ce_isnew") == 1
+    _both(m)                                      # the editor: both = Sel = add a code
+    m.settle()
+    assert m.u8("ce_kmode") == 0 and m.has("A B C D E F"), m.text()   # the code keyboard
+
+
+def test_full_description_scrolls_at_its_edge_rows(t):
+    desc = " ".join(f"word{i:03d}" for i in range(260))
+    yml = f'---\ntitle: "Long Desc"\ndescription: "{desc}"\n'.encode()
+    m = t.menu(t.sd(extra={"/sd2snes/info/TE/Test Game.yml": yml}), env=MOUSE)
+    _point_row(m, "Test Game.sfc")
+    m.mouse_click("left")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has("Long Desc"), what="a ficha")
+    m.settle()
+    _hold_right(m)                                # Y: the full description
+    m.wait(lambda: m.u8("gi_desc_full") == 1, what="a descrição completa")
+    m.settle()
+    assert m.u16("gi_desc_scroll") == 0
+    _point(m, 100, 24 * 8 + 4)                    # its last row
+    m.step(90)
+    assert m.u16("gi_desc_scroll") > 0, m.u16("gi_desc_scroll")
+    _point(m, 100, 17 * 8 + 4)                    # its first row
+    m.wait(lambda: m.u16("gi_desc_scroll") == 0, frames=900, what="voltar ao topo")
+
+
+def _to_option(m, *labels):
+    for _ in range(10):
+        m.press("X", pad=2)
+        m.settle()
+        if m.has(c.tr(labels[0])):
+            break
+    for i, lbl in enumerate(labels):
+        want = c.tr(lbl)
+        for _ in range(30):
+            if want in m.bar_row():
+                break
+            m.press("DOWN", pad=2)
+            m.step(8)
+        assert want in m.bar_row(), (lbl, m.text())
+        if i < len(labels) - 1:
+            m.press("A", pad=2)
+            m.settle()
+
+
+def test_click_on_an_option_sets_the_next_value(t):
+    m = t.menu(env=MOUSE)
+    _to_option(m, "mtext_mm_cfg", "mtext_cfg_browser", "mtext_browser_hide_ext")
+    cfg = 0xFF0118
+    v0 = m.psram(cfg, 1)[0]
+    row = m.u8("bar_yl") + 1
+    _point(m, m.u8("window_x") * 4 + 24, 8 * row - 9)
+    m.mouse_click("left")
+    m.wait(lambda: m.psram(cfg, 1)[0] != v0, frames=300, what="o valor seguinte")
+    v1 = m.psram(cfg, 1)[0]
+    m.settle()
+    m.mouse_click("left")                         # past the last value: back to the first
+    m.wait(lambda: m.psram(cfg, 1)[0] != v1, frames=300, what="a volta ao primeiro")
+    assert m.psram(cfg, 1)[0] == v0
