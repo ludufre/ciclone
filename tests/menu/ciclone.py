@@ -313,6 +313,34 @@ class Menu:
         self.release(pad=pad)
         self.step(after)
 
+    # -- mouse (CICLONE_PORT1/2=mouse)
+    def mouse(self, dx: int = 0, dy: int = 0, left: bool = False, right: bool = False, port: int = 1):
+        """Queues dx/dy counts (+ = right/down) for the mouse in `port` and holds its buttons. The
+        console gets the motion at its next latch, at most 127 counts per axis per latch."""
+        b = (1 if left else 0) | (2 if right else 0)
+        self._cmd(f"mouse {port} {int(dx)} {int(dy)} {b:x}")
+
+    def mouse_move(self, dx: int = 0, dy: int = 0, frames: int = 1, port: int = 1, after: int = 1,
+                   left: bool = False, right: bool = False):
+        """Moves by (dx, dy) spread over `frames` frames (one latch each), then steps `after`.
+        `left`/`right` stay held during the move (a drag)."""
+        frames = max(1, frames)
+        sx = sy = 0
+        for i in range(frames):
+            nx, ny = dx * (i + 1) // frames, dy * (i + 1) // frames
+            self.mouse(nx - sx, ny - sy, left=left, right=right, port=port)
+            sx, sy = nx, ny
+            self.step(1)
+        if after:
+            self.step(after)
+
+    def mouse_click(self, button: str = "left", hold: int = 3, after: int = 3, port: int = 1):
+        """Presses and releases one mouse button ("left" or "right")."""
+        self.mouse(left=button == "left", right=button == "right", port=port)
+        self.step(hold)
+        self.mouse(port=port)
+        self.step(after)
+
     # -- memória
     def cpu(self) -> tuple[int, int]:
         """The S-CPU's PB:PC and S at this point of the frame."""

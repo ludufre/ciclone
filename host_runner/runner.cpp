@@ -56,8 +56,29 @@ static int16_t g_buttons2[16] = {0};  // controle 2 (só o protocolo --serve o a
 static uint16_t g_menu_mask = 0;
 static int g_menu_hold = 0;
 constexpr int MENU_HOLD = 20;
+// SNES Mouse (CICLONE_PORT1/2=mouse): motion the harness queued ("mouse" command) waits here
+// until the console latches the port. bsnes asks for X and Y once per latch (Input::poll: the
+// auto-joypad read, or a $4016 strobe edge), and a real mouse reports the motion since the last
+// latch and clears its counters -- so each query hands out at most 127 counts and keeps the rest
+// for the next latch. Buttons are live, like a pad's.
+static int g_mouse_dx[2] = {0, 0}, g_mouse_dy[2] = {0, 0};
+static bool g_mouse_left[2] = {false, false}, g_mouse_right[2] = {false, false};
+static int16_t mouse_take(int &acc) {
+  int v = acc > 127 ? 127 : acc < -127 ? -127 : acc;
+  acc -= v;
+  return (int16_t)v;
+}
 static int16_t istate(bool port2, unsigned device, unsigned, unsigned id) {
-  if (device == SNES_DEVICE_MOUSE) return 0;   // CICLONE_PORT1=mouse: a mouse at rest, no button
+  if (device == SNES_DEVICE_MOUSE) {
+    const int p = port2 ? 1 : 0;
+    switch (id) {
+      case SNES_DEVICE_ID_MOUSE_X:     return mouse_take(g_mouse_dx[p]);
+      case SNES_DEVICE_ID_MOUSE_Y:     return mouse_take(g_mouse_dy[p]);
+      case SNES_DEVICE_ID_MOUSE_LEFT:  return g_mouse_left[p];
+      case SNES_DEVICE_ID_MOUSE_RIGHT: return g_mouse_right[p];
+    }
+    return 0;
+  }
   if (id >= 16) return 0;
   if (port2) return g_buttons2[id];   // a porta 2 é um controle à parte (antes espelhava a 1)
   return g_buttons[id] || (g_menu_hold > 0 && (g_menu_mask >> id & 1));
@@ -168,12 +189,14 @@ static void cart_frame(void) {
   if (!dump_init) { dump_init = true; if (const char *f = getenv("CICLONE_CART_PCM")) dump = fopen(f, "wb"); }
   if (dump) { fwrite(g_cart.data(), 2, g_cart.size(), dump); fflush(dump); }
 }
-// CICLONE_PORT1=mouse: a non-standard controller in port 1 (its ID nibble is what the hooks and
-// the in-game menu have to tell apart from a pad). bsnes puts its configured device back on every
-// reset, so this runs after each one.
+// CICLONE_PORT1=mouse / CICLONE_PORT2=mouse: a SNES Mouse in that port (its ID nibble is what the
+// hooks and the menus have to tell apart from a pad; the "mouse" command moves and clicks it).
+// bsnes puts its configured device back on every reset, so this runs after each one.
 static void apply_port1(void) {
   if (const char *p1 = getenv("CICLONE_PORT1"))
     if (!strcmp(p1, "mouse")) snes_set_controller_port_device(SNES_PORT_1, SNES_DEVICE_MOUSE);
+  if (const char *p2 = getenv("CICLONE_PORT2"))
+    if (!strcmp(p2, "mouse")) snes_set_controller_port_device(SNES_PORT_2, SNES_DEVICE_MOUSE);
 }
 static void snes_frame(void) {
   if (ciclone_snes_reset_edge) { ciclone_snes_reset_edge = 0; snes_reset(); apply_port1(); }
@@ -355,6 +378,10 @@ static void parse_shots(const char *arg) {
 // para --fwlog (line-buffered, o harness lê ao vivo). Comandos (uma linha, resposta "ok ..."):
 //   step N              roda N quadros com os botões atuais     -> ok <quadro>
 //   buttons MASK        segura os botões (hex, bit = id libsnes) -> ok
+//   buttons2 MASK       idem, controle 2                          -> ok
+//   mouse PORT DX DY B  mouse na porta 1|2: soma DX/DY (decimal, + = direita/baixo) ao movimento
+//                       pendente (entregue no próximo latch, até 127 por eixo) e segura os botões
+//                       B (bit 0 = esquerdo, bit 1 = direito)    -> ok
 //   menumask            o combo do menu in-game armado agora (a tecla M da janela) -> ok <hex>
 //   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam aram psram snescmd -> ok <hex>
 //   sdstat              leituras do cartão até agora: setores reinícios -> ok <n> <n>
@@ -385,6 +412,14 @@ static void serve_loop(ciclone::FpgaModel *m) {
     } else if (!strcmp(cmd, "buttons2")) {
       unsigned mask = 0; sscanf(line + 8, "%x", &mask);
       for (int i = 0; i < 16; i++) g_buttons2[i] = (mask >> i) & 1;
+      fprintf(g_proto, "ok\n");
+    } else if (!strcmp(cmd, "mouse")) {
+      int port = 1, dx = 0, dy = 0; unsigned b = 0;
+      if (sscanf(line, "mouse %d %d %d %x", &port, &dx, &dy, &b) != 4 || port < 1 || port > 2) {
+        fprintf(g_proto, "err syntax\n"); fflush(g_proto); continue;
+      }
+      g_mouse_dx[port - 1] += dx; g_mouse_dy[port - 1] += dy;
+      g_mouse_left[port - 1] = b & 1; g_mouse_right[port - 1] = (b >> 1) & 1;
       fprintf(g_proto, "ok\n");
     } else if (!strcmp(cmd, "peek")) {
       char space[16] = {0}; unsigned addr = 0, len = 0;
