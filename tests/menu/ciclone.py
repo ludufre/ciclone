@@ -110,6 +110,8 @@ def _font_decode() -> dict[int, str]:
         # glyphs no char maps to (the onboarding tour's arrows and progress line): drawn,
         # not garbage
         dec.update({c: ch for c, (ch, _) in getattr(fontedit, "TOUR_GLYPHS", {}).items()})
+        # the mouse-button glyphs a key legend shows in place of A/B/X/Y with a mouse in
+        dec.update({c: ch for c, (ch, _) in getattr(fontedit, "MOUSE_GLYPHS", {}).items()})
         # the browser's file-type icons (two glyphs ahead of each name) decode to nothing, so
         # a row still reads as its name; tile_at() tells which icon a row shows
         for _, (code, _) in getattr(fontedit, "BROWSER_ICONS", {}).items():

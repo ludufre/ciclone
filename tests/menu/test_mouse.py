@@ -34,6 +34,14 @@ def _point(m, x: int, y: int, port: int = 1, after: int = 2):
                       f"({m.u16('mouse_x')},{m.u16('mouse_y')})")
 
 
+def _hold_right(m, port: int = 1):
+    """Right button held alone past MOUSE_RHOLD: Y (the browser's context menu)."""
+    m.mouse(right=True, port=port)
+    m.step(32)
+    m.mouse(port=port)
+    m.step(4)
+
+
 def _oam(m) -> tuple[int, int, int, int]:
     return tuple(m.peek("oam", SLOT * 4, 4))
 
@@ -126,23 +134,31 @@ def test_click_on_another_row_selects_it_first(t):
     m.wait(lambda: "first.sfc" in m.list_names(), what="a listagem de Two Games/")
 
 
-def test_right_hold_goes_back(t):
+def test_right_click_goes_back(t):
     m = t.menu(env=MOUSE)
     _point_row(m, "Two Games/")
     m.mouse_click("left")
     m.wait(lambda: "first.sfc" in m.list_names(), what="a listagem de Two Games/")
     m.settle()
     _point(m, 200, 30)                            # anywhere: over the logo
-    m.mouse_click("right", hold=40, after=4)
+    m.mouse_click("right")
     m.wait(lambda: m.list_names() == ROOT, what="a raiz de volta")
     m.settle()
-    assert m.u16("window_stack_head") == 0xFFFF   # no context menu on the release
+    assert m.u16("window_stack_head") == 0xFFFF   # no context menu
 
+
+def test_right_hold_opens_the_context_of_the_row(t):
+    m = t.menu(env=MOUSE)
+    _point_row(m, "Test Game.sfc")
+    _hold_right(m)
+    m.settle()
+    assert m.has(c.tr("text_filesel_context_add_to_favorites")), m.text()
+    assert m.u16("filesel_sel") == ROOT.index("Test Game.sfc")
 
 def test_right_click_opens_context_and_the_pointer_drives_it(t):
     m = t.menu(env=MOUSE)
     _point_row(m, "Test Game.sfc")
-    m.mouse_click("right")
+    _hold_right(m)
     m.settle()
     fav = c.tr("text_filesel_context_add_to_favorites")
     assert m.has(fav), m.text()
@@ -164,7 +180,7 @@ def test_right_click_closes_the_menu_and_nothing_else(t):
     starts with no edge)."""
     m = t.menu(env=MOUSE)
     _point_row(m, "Test Game.sfc")
-    m.mouse_click("right")
+    _hold_right(m)
     m.settle()
     fav = c.tr("text_filesel_context_add_to_favorites")
     assert m.has(fav), m.text()
@@ -182,7 +198,7 @@ def test_left_click_on_a_menu_row_runs_it(t):
     sd = t.sd()
     m = t.menu(sd, env=MOUSE)
     _point_row(m, "Test Game.sfc")
-    m.mouse_click("right")
+    _hold_right(m)
     m.settle()
     fav = c.tr("text_filesel_context_add_to_favorites")
     y = m.row_of(fav)
@@ -217,9 +233,9 @@ def test_game_info_ignores_motion_and_drags_to_the_next_game(t):
 def test_legend_click_presses_its_key(t):
     m = t.menu(env=MOUSE)
     row = m.screen()[28]
-    h = row.find("X:")
+    h = row.find("\u24b7")                        # X shows as the both-buttons glyph
     assert h >= 0, row
-    _point(m, 4 * (h + 3) + 1, 212)               # on the 'n' of "Menu"
+    _point(m, 4 * (h + 3) + 1, 212)               # on the label after the glyph
     m.mouse_click("left")
     m.wait(lambda: m.u8("mainmenu_active") == 1, what="o menu principal")
     m.settle()
@@ -388,7 +404,9 @@ def test_game_info_description_click_opens_the_full_text(t):
 def test_game_info_footer_click_presses_its_key(t):
     m = _ficha(t)
     row = m.screen()[26]
-    h = row.find("B:")
+    h = row.find("Back")                          # B's label (its key is a mouse glyph)
+    assert h >= 0, row
+    h -= 4
     assert h >= 0, row
     _point(m, 4 * (h + 4) + 1, 26 * 8 + 4)        # on the label after "B:"
     m.mouse_click("left")
@@ -434,4 +452,53 @@ def test_game_info_clip_and_pointer_share_the_palette_without_flicker(t):
             assert got == want, (k, got, want)
     oam = m.peek("oam", 0, 512)
     shown = [i for i in range(128) if oam[4 * i + 1] < 224]
-    assert shown == [SLOT], shown
+    assert shown == list(range(SLOT, SLOT + 9)), shown   # the arrow + the two buttons
+
+
+def test_legend_shows_the_mouse_buttons(t):
+    """With a mouse in, each one-letter key and its ':' become a two-cell mouse glyph: left
+    click for A, right click for B, both for X, right held for Y."""
+    m = t.menu(env=MOUSE)
+    bar = m.statusbar()
+    assert "A:" not in bar and "B:" not in bar, bar
+    for lbl, g in (("Select", "\u24c1"), ("Back", "\u24c7"), ("Menu", "\u24b7"),
+                   ("Context", "\u24c7\u24bd")):
+        assert g + lbl in bar, (lbl, bar)
+    m.close()
+    m = t.menu()
+    assert m.statusbar().startswith(c.tr("text_statusbar_keys")), m.statusbar()
+
+def test_menu_list_scrolls_at_its_edge_rows(t):
+    """The standard list edge scroll (mouse_lzone): Favorites with more entries than rows."""
+    favs = "".join(f"/Long/game {i:02d}.sfc\n" for i in range(20)).encode()
+    m = t.menu(t.sd(extra={**LONG, "/sd2snes/favorites.cfg": favs}), env=MOUSE)
+    m.press("SEL", pad=2)
+    m.wait(lambda: m.has("game 00"), what="os favoritos")
+    m.settle()
+    top0 = m.u8("fav_top")
+    wy, wh = m.u8("window_y"), m.u8("window_h")
+    last = wy + wh - 2                            # the window's last item row
+    _point(m, m.u8("window_x") * 4 + 30, 8 * last - 9)
+    m.step(90)
+    assert m.u8("fav_top") > top0, (top0, m.u8("fav_top"))
+    _point(m, m.u8("window_x") * 4 + 30, 8 * (wy + 1) - 9)
+    m.wait(lambda: m.u8("fav_top") == 0, frames=900, what="voltar ao topo")
+
+
+def test_game_info_previous_next_buttons(t):
+    m = t.menu(env=MOUSE)
+    _point_row(m, "MSU Game/")
+    m.mouse_click("left")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has("msugame"), what="a ficha")
+    m.mouse_move(2, 0, frames=1, after=4)
+    oam = m.peek("oam", 64 * 4, 36)
+    shown = [oam[4 * i + 1] < 224 for i in range(9)]
+    assert all(shown), oam.hex()
+    assert any(m.peek("vram", 0x5FD0 * 2, 64))
+    _point(m, 236 + 8, 56 + 8)                    # the next button
+    m.mouse_click("left")
+    m.wait(lambda: not m.has("msugame"), what="a ficha do próximo jogo")
+    assert m.u16("screen_dma_disable") == 1
+    _point(m, 4 + 8, 56 + 8)                      # the previous one
+    m.mouse_click("left")
+    m.wait(lambda: m.has("msugame"), what="a ficha de volta")
