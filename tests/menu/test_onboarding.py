@@ -59,10 +59,10 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 42         # card descriptors (onb_feat_table); the header counts the ones shown
+NCARDS = 43         # card descriptors (onb_feat_table); the header counts the ones shown
 MORE_CARD = 32      # "and more": the base tour's last card, 8 items
 SECTION_CARD = 33   # the 2.17 section's opening card, then the release's cards (34..40)
-SECTION_218 = 41    # the 2.18 section's opening card, then its card (42)
+SECTION_218 = 41    # the 2.18 section's opening card, then its cards (42..43)
 MORE_ITEMS = 8
 # the cards by descriptor number (onb_fN_name)
 C_THEME, C_OUTLINE, C_AA, C_COVERS, C_COVLISTS, C_GI, C_VIDEO, C_CLIPMUSIC = 2, 3, 4, 5, 6, 7, 8, 9
@@ -70,7 +70,7 @@ C_MUSIC, C_RANDOM, C_SFX, C_MSU, C_PCM, C_SD2SNESDIR, C_RESET, C_CHEATLIST = 10,
 C_IGM, C_STATES, C_SAVES, C_TRAINER, C_PATCHES, C_CREATEROM, C_CHIPS = 18, 19, 20, 21, 22, 23, 24
 C_SUFAMI, C_CCTIME, C_CONSOLES, C_ATARI, C_FOLDERS, C_MEMTEST, C_LED = 25, 26, 27, 28, 29, 30, 31
 C_PAD2, C_GBC, C_HOOKLIST, C_SETA, C_COL20, C_ICONS, C_GICHEATS = 34, 35, 36, 37, 38, 39, 40
-C_RP2040 = 42
+C_RP2040, C_MOUSE = 42, 43
 # Cards shown on one board only (ONB_FF_MK3ONLY / ONB_FF_MK2ONLY): the Ciclone is a Mk.III,
 # so the Mk.II's LED card is left out of every walk and of the header's count.
 MK3ONLY = (C_CONSOLES, C_ATARI, C_GBC)
@@ -318,7 +318,7 @@ def test_tour_217_section(t):
 def test_tour_218_section(t):
     """The 2.18 section: its opening card, then the card of the cartridge with its own
     microcontroller (RP2040): an info-only card whose text names the dump file the game
-    needs on the card; then "all set"."""
+    needs on the card; then the SNES Mouse card, info-only too; then "all set"."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     _goto_card(m, SECTION_218)
@@ -333,21 +333,32 @@ def test_tour_218_section(t):
     assert m.has(para(C_RP2040)), m.text()
     assert c.UNKNOWN not in m.text(), m.text()
     m.press("RIGHT")
+    m.wait_text(hdr(C_MOUSE))
+    m.step(30)
+    assert m.has(otr(f"onb_f{C_MOUSE}_name")), m.text()
+    assert m.has(para(C_MOUSE)), m.text()
+    assert c.UNKNOWN not in m.text(), m.text()
+    m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
 
 
 def test_tour_new_release_shows_only_its_cards(t):
     """A card that was already seen under an older tour version stays out: with version 1
     saved (the tour of the previous release), the gate asks again and the tour walks only
-    the 2.18 cards (the separator and the RP2040 cartridge), then saves version 2."""
+    the 2.18 cards (the separator, the RP2040 cartridge and the SNES Mouse), then saves
+    version 2."""
     sd = t.sd(config="---\nOnboardingVersion: 1\n")
     m = t.menu(sd)
-    _enter_tour(m, total=2)
+    _enter_tour(m, total=3)
     assert m.has(otr(f"onb_f{SECTION_218}_name")), m.text()
     m.press("RIGHT")
-    m.wait_text("2/2")
+    m.wait_text("2/3")
     m.step(30)
     assert m.has(otr(f"onb_f{C_RP2040}_name")), m.text()
+    m.press("RIGHT")
+    m.wait_text("3/3")
+    m.step(30)
+    assert m.has(otr(f"onb_f{C_MOUSE}_name")), m.text()
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
     m.step(30)
@@ -1037,7 +1048,7 @@ def test_tour_card_order(t):
         "What's new in 2.17", "Controller 2 shortcuts/hooks", "Game Boy Color",
         "Shortcut/hook list", "Seta chips and bootlegs", "Super 20 in 1, Gamars, .sfrom",
         "Icons in the list", "Cheats from the game info", "What's new in 2.18",
-        name(C_RP2040)]
+        name(C_RP2040), "SNES Mouse"]
     assert len(set(onb.NAMES[C_RP2040 - 1][:8])) == 1      # a proper noun: the same in every language
     items = [name(n) for n in range(NCARDS + 1, NCARDS + MORE_ITEMS + 1)]
     assert items == ["Clear PPU on boot", "Bus timing compat", "Hardware model",
@@ -1056,8 +1067,8 @@ def _descriptors():
 
 def test_tour_descriptors_per_board(t):
     """The cards of the cores only the FXPAK PRO (Mk.III) has (other consoles, the Atari's
-    controls, Game Boy Color) are flagged for it, the Mk.II's LED codes for the Mk.II: 41
-    cards on a Mk.III, 39 on a Mk.II. The dependencies point at the right parents after the
+    controls, Game Boy Color) are flagged for it, the Mk.II's LED codes for the Mk.II: 42
+    cards on a Mk.III, 40 on a Mk.II. The dependencies point at the right parents after the
     reorder, and the hook flags sit on the in-game menu, savestates and controller 2 cards."""
     d = {n: (dep, dep2, fl, opt) for n, dep, dep2, fl, opt in _descriptors()}
     assert sorted(d) == list(range(1, NCARDS + MORE_ITEMS + 1)), sorted(d)
@@ -1065,8 +1076,8 @@ def test_tour_descriptors_per_board(t):
     mk2 = [n for n in d if "ONB_FF_MK2ONLY" in d[n][2]]
     assert mk3 == list(MK3ONLY) and mk2 == list(MK2ONLY), (mk3, mk2)
     cards = range(1, NCARDS + 1)
-    assert len([n for n in cards if n not in mk2]) == 41
-    assert len([n for n in cards if n not in mk3]) == 39
+    assert len([n for n in cards if n not in mk2]) == 42
+    assert len([n for n in cards if n not in mk3]) == 40
     hook = {n for n in d if "ONB_FF_HOOK" in d[n][2]}
     assert hook == {C_IGM, C_STATES, C_PAD2}, hook
     assert "ONB_FF_BUTTONS" in d[C_PAD2][2]
