@@ -59,6 +59,31 @@ def test_prompt_missing_tour_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
+def test_seen_tour_starts_with_no_question(t):
+    """A tour seen under an older version (not 0) is not a first boot: the gate shows no
+    language prompt and boots the tour at once, in the saved language."""
+    m = t.menu(t.sd(config="---\nOnboardingVersion: 1\nLanguage: 1\n"))
+    m.wait(lambda: "/sd2snes/onboarding.bin" in m.fwlog(), frames=900, what="a carga do tour")
+    assert not m.has(c.encode_menu_text(c.tr("text_onbg_question", "ptbr"))), m.text()
+    m.wait(lambda: m.has("1/3"), frames=1500, what="o primeiro card do tour")
+    m.step(30)
+    assert m.has(otr(f"onb_f{SECTION_218}_name", "ptbr")), m.text()
+
+
+def test_seen_tour_missing_counts_as_skip(t):
+    """With no onboarding.bin the tour seen before is skipped as the gate's B: no prompt,
+    the browser comes back and the version is saved."""
+    sd = t.sd(config="---\nOnboardingVersion: 1\n", onboarding=False)
+    m = t.menu(sd)
+    m.wait(lambda: "onboarding.bin not found" in m.fwlog(), frames=900, what="a recusa")
+    m.settle()
+    assert not m.has(c.encode_menu_text(c.tr("text_onbg_question"))), m.text()
+    assert "Test Game.sfc" in m.list_names()
+    assert m.u16("window_stack_head") == 0xFFFF
+    m.close()
+    assert SEEN in _cfg(t, sd)
+
+
 NCARDS = 43         # card descriptors (onb_feat_table); the header counts the ones shown
 MORE_CARD = 32      # "and more": the base tour's last card, 8 items
 SECTION_CARD = 33   # the 2.17 section's opening card, then the release's cards (34..40)
@@ -119,11 +144,13 @@ def para(n, lang="en", line=0):
     return c.encode_menu_text(raw.replace("[", "").replace("]", ""))   # button markup draws nothing
 
 
-def _enter_tour(m, lang="en", total=None):
+def _enter_tour(m, lang="en", total=None, ask=True):
     """Answer yes to the first-boot question and wait for the tour's first card (total =
-    the cards the header counts, when the test leaves some out from the start)."""
-    m.wait_text(c.encode_menu_text(c.tr("text_onbg_question", lang)))
-    m.press("A")
+    the cards the header counts, when the test leaves some out from the start). ask=False:
+    a tour seen before starts with no question."""
+    if ask:
+        m.wait_text(c.encode_menu_text(c.tr("text_onbg_question", lang)))
+        m.press("A")
     m.wait(lambda: "/sd2snes/onboarding.bin" in m.fwlog(), frames=900, what="a carga do tour")
     # the first card; "/12" when a card is left out (random music without music)
     m.wait(lambda: m.has(f"1/{total}") if total else (m.has(f"1/{TOTAL}") or m.has(f"1/{TOTAL - 1}")),
@@ -344,12 +371,12 @@ def test_tour_218_section(t):
 
 def test_tour_new_release_shows_only_its_cards(t):
     """A card that was already seen under an older tour version stays out: with version 1
-    saved (the tour of the previous release), the gate asks again and the tour walks only
-    the 2.18 cards (the separator, the RP2040 cartridge and the SNES Mouse), then saves
-    version 2."""
+    saved (the tour of the previous release), the tour starts again with no question (the
+    language was picked the first time) and walks only the 2.18 cards (the separator, the
+    RP2040 cartridge and the SNES Mouse), then saves version 2."""
     sd = t.sd(config="---\nOnboardingVersion: 1\n")
     m = t.menu(sd)
-    _enter_tour(m, total=3)
+    _enter_tour(m, total=3, ask=False)
     assert m.has(otr(f"onb_f{SECTION_218}_name")), m.text()
     m.press("RIGHT")
     m.wait_text("2/3")
@@ -657,8 +684,9 @@ for _i, _lang in enumerate(c.LANGS):
     globals()[_fn.__name__] = _fn
 
 
-def _open_tour_entry(m):
-    """Main menu (X) > Settings > the last row, "Tour of the new features"."""
+def _open_tour_entry(m, start="all"):
+    """Main menu (X) > Settings > the last row, "Tour of the new features" > where to
+    start (all, 217, 218)."""
     m.press("X")
     m.wait_text(c.tr("mtext_mm_cfg"))
     for _ in range(12):
@@ -675,6 +703,78 @@ def _open_tour_entry(m):
         m.step(4)
     assert c.encode_menu_text(c.tr("mtext_cfg_tour")) in m.bar_row(), m.text()
     m.press("A")
+    row = c.encode_menu_text(c.tr(f"mtext_cfg_tour_{start}"))
+    m.wait_text(row)
+    for _ in range(4):
+        if row in m.bar_row():
+            break
+        m.press("DOWN")
+        m.step(4)
+    assert row in m.bar_row(), m.text()
+    m.press("A")
+
+
+def test_settings_entry_lists_the_releases(t):
+    """The entry asks where to start: the whole tour, or from a release's section on
+    (one line per release, the last one marked as the current)."""
+    m = t.menu(t.sd())
+    m.press("X")
+    m.wait_text(c.tr("mtext_mm_cfg"))
+    for _ in range(12):
+        if c.encode_menu_text(c.tr("mtext_mm_cfg")) in m.bar_row():
+            break
+        m.press("DOWN")
+        m.step(4)
+    m.press("A")
+    m.wait_text(c.tr("mtext_cfg_tour"))
+    for _ in range(14):
+        if c.encode_menu_text(c.tr("mtext_cfg_tour")) in m.bar_row():
+            break
+        m.press("DOWN")
+        m.step(4)
+    m.press("A")
+    for k in ("all", "217", "218"):
+        m.wait_text(c.encode_menu_text(c.tr(f"mtext_cfg_tour_{k}")))
+    assert c.encode_menu_text(c.tr("mtext_cfg_tour_all")) in m.bar_row(), m.text()
+    m.press("B")
+    m.step(30)
+    assert not m.has(c.encode_menu_text(c.tr("mtext_cfg_tour_217"))), m.text()
+    assert "/sd2snes/onboarding.bin" not in m.fwlog()
+
+
+def _replay_from(t, start, first):
+    """Settings > tour from a release: the tour opens on that release's separator card,
+    counts only the cards from there on, B on it stays, and the end saves the version."""
+    sd = t.sd()
+    m = t.menu(sd)
+    _open_tour_entry(m, start)
+    total = len([n for n in shown() if n >= first])
+    m.wait_text(f"1/{total}", frames=1500)
+    m.step(30)
+    assert m.has(otr(f"onb_f{first}_name")), m.text()
+    m.press("LEFT")
+    m.step(40)
+    assert m.has(f"1/{total}"), m.text()
+    for k in range(2, total + 1):
+        m.press("RIGHT")
+        m.wait_text(f"{k}/{total}")
+        m.step(30)                     # the card fades in; a press during the ramp is lost
+    assert m.has(otr(f"onb_f{C_MOUSE}_name")), m.text()
+    m.press("RIGHT")
+    m.wait_text(otr("onb_ui_done_title"))
+    m.step(30)
+    m.press("A")
+    _back_to_menu(m)
+    m.close()
+    assert SEEN in _cfg(t, sd)
+
+
+def test_settings_tour_from_217(t):
+    _replay_from(t, "217", SECTION_CARD)
+
+
+def test_settings_tour_from_218(t):
+    _replay_from(t, "218", SECTION_218)
 
 
 def test_settings_entry_replays_tour(t):
