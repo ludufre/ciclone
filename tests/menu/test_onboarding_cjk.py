@@ -100,7 +100,7 @@ def _enter(m, total):
 def _walk(t, lang_idx, lang):
     sd = t.sd(config=f"---\nOnboardingVersion: 0\nLanguage: {lang_idx}\n")
     m = t.menu(sd)
-    total = 39                                     # the Mk.III's cards
+    total = 41                                     # the Mk.III's cards
     _enter(m, total)
     seen = 0
     for n in range(1, total + 1):
@@ -112,7 +112,7 @@ def _walk(t, lang_idx, lang):
         if n < total:
             m.press("RIGHT")
             m.step(40)
-    assert seen > 39 * 10, f"{lang}: only {seen} CJK cells on screen in the whole tour"
+    assert seen > total * 10, f"{lang}: only {seen} CJK cells on screen in the whole tour"
     m.press("RIGHT")                               # past the last card: "all set"
     m.wait(lambda: not m.has(f"{total}/{total}"), frames=300, what="the all-set screen")
     m.step(40)
@@ -135,7 +135,7 @@ def test_language_card_switches_live(t):
     between the two (their glyphs 128+ are different sheets) and back to a Latin one."""
     sd = t.sd(config="---\nOnboardingVersion: 0\n")
     m = t.menu(sd)
-    _enter(m, 39)
+    _enter(m, 41)
     langs = ["en", "ptbr", "es", "de", "fr", "it", "ru", "nl", "ja", "zh"]
     for k in range(1, 10):                         # down to Chinese, through Japanese
         m.press("DOWN")
