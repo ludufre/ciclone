@@ -2,7 +2,10 @@
  * Kept separate so behavioral.cpp / fpga_model.h stay untouched. */
 #include "fpga_model.h"
 
+#include <string.h>
+
+// the core the firmware loaded, by bitstream name: 1 = the SMS core (runs as RTL in the model)
 extern "C" void ciclone_fpga_reconfigure(const char *core) {
-  (void)core;
-  if (ciclone::active_model()) ciclone::active_model()->reconfigure(0);
+  int id = core && strstr(core, "fpga_sms.") ? 1 : 0;
+  if (ciclone::active_model()) ciclone::active_model()->reconfigure(id);
 }

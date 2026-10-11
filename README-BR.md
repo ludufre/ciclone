@@ -102,6 +102,7 @@ Um script por cenário - cada um builda sozinho o que faltar:
 | `bash run/sd.sh [jogo.sfc]` | (re)cria a imagem do SD; opcionalmente adiciona um jogo |
 | `bash run/keys.sh "<botões>" "<shots>"` | roteiro de botões headless -> PNGs em `build/shots/` |
 | `bash run/test_menu.sh [-k filtro]` | **suíte automatizada do menu** (builda o menu do working tree e roda) |
+| `python3 tools/sms_run.py JOGO.sms` | **um jogo de Master System** no RTL do core SMS, carregado pelo menu, com métricas de quadro (ver *Jogos de Master System*) |
 
 ---
 
@@ -239,6 +240,55 @@ e o SNES emulado roda bem mais rápido. Dois mecanismos do runner, ambos só com
 - `CICLONE_FIXED_TIME="AAAA-MM-DD HH:MM:SS"` congela o relógio (a suíte usa `2026-01-02 03:04:05`).
 - `CICLONE_TRACE_APU=<arquivo>` / `CICLONE_AUDIO_LEVEL=<arquivo>`: escritas nas portas da APU com PC e pilha /
   nível do som por quadro (ver abaixo).
+
+### Jogos de Master System (o core SMS em RTL)
+
+Quando a firmware carrega o `fpga_sms` (um `.sms` pelo menu), o modelo do FPGA entrega o cartucho ao
+**RTL real do core SMS**: `verilog/sd2snes_sms/sms_core.v` e tudo abaixo dele (o Z80 tv80, o mapper Sega,
+a WRAM, a captura do VDP, o PSG, a tradução SMS->SNES), Verilado por `fpga_model/verilate_sms.sh`. A cola
+que o `main.v`/`address.v` põe em volta dele está espelhada em C++ no `fpga_model/sms_model.cpp` (o clock
+CLK2 e o clock enable de 3,58 MHz, o árbitro da PSRAM com as prioridades, a janela `$EF` do pad e do double
+buffer, a janela `$E0-$E3` dos buffers), e o lado SNES é o player da mesma árvore (`snes/sms/sms_snes.asm`,
+montado com asar pelo `tools/build_sms_player.sh`). Ou seja: mudança no RTL do core, no player ou no
+`src/sms.c` é testada como está, sem síntese.
+
+```sh
+python3 tools/sms_run.py JOGO.sms --seconds 20 --keys "180:B:10,700:RIGHT:900" --shot-every 60
+CICLONE_TREE=/outra/arvore python3 tools/sms_run.py JOGO.sms ...   # o RTL, o player e o C dela
+```
+
+O `tools/sms_run.py` builda o que falta, boota o jogo **pelo menu** e grava em `build/sms-run/<jogo>/`:
+screenshots, `persec.txt` (uma linha por segundo: imagens distintas na tela, buffers que o player trocou,
+quadros do VDP sem tradução porque o anterior ainda não tinha sido lido (`gate`) ou ainda estava sendo
+feito (`busy`), o passe de tradução mais longo em ciclos de CLK2, a NMI mais longa do player em scanlines,
+% dos clocks do Z80 esperando a PSRAM), `sms.log` (o mesmo por quadro do SNES), `stats.txt` (os totais,
+inclusive slots de PSRAM por cliente), `state.txt` (o core no fim: PC do Z80, bancos do mapper, registradores
+do VDP, CRAM), `fw.log` e um vídeo com `--record`. `--keys` é `F:BTN[+BTN][:SEGURA]` em quadros depois do boot
+do jogo (B ou A do SNES = botão 1, Y ou A = botão 2). Outra árvore ganha um diretório de build próprio
+(`build/tree-<hash>/`). Roda a ~0,25x do tempo real: ciclos em que o core comprovadamente não muda (as mesmas
+entradas, e duas bordas seguidas que deixaram todo registrador do core igual) não são avaliados;
+`CICLONE_SMS_EXACT=1` avalia todos (mesmo resultado, ~2,5x mais lento; o `build/sms_bench` compara os dois,
+ver `tests/sms_bench.cpp`).
+
+Nos testes: `m.sms()` (os contadores), `m.sms_peek("vram"|"cram"|"wram"|"vreg"|"bank"|"pc", addr, n)` (o estado
+do core) e `m.video()` (quadros e quadros distintos), ver `tests/menu/test_sms.py`; ROMs `.sms` são achadas
+pelo CRC32 como as de SNES.
+
+O que é modelo e não RTL: o lado SNES do árbitro da PSRAM. O bsnes não expõe cada ciclo de barramento, então
+os slots livres vêm do tempo do SNES: cada acesso ao cartucho (o código do player, cada byte que um DMA lê de
+`$E0-$E3`) é um ciclo de ROM de 8 clocks com um slot no fim, e o resto do tempo dá um slot a cada
+`CICLONE_SMS_SLOT_MC` master clocks (default 8: o player espera em WAI com um endereço de ROM no barramento);
+as escritas do SNES que o `ctx.v` espelha na PSRAM levam um slot antes (as leituras de registrador do `ctx.v`
+não são visíveis); e as leituras de PSRAM do MCU também passam na frente do core: o laço de jogo da firmware
+chama `sram_reliable()` a cada volta (1024 leituras), o formato da volta vem do tráfego SPI da própria firmware
+do host e o tempo vem do SPI do hardware (`CICLONE_SMS_MCU="<ns>,<ns>"` espaçamento, `"0"` desliga,
+`CICLONE_SMS_MCU_SPI_NS`, `CICLONE_SMS_MCU_FIXED_NS`). Se a cola do `main.v` mudar, o `sms_model.cpp` tem que
+acompanhar; duas variantes são reconhecidas no `main.v` da árvore e seguidas sozinhas (`glue=` nos contadores):
+o espelho do ctx desligado (`BUS_RDY(1'b0)`, ou `CICLONE_SMS_NOCTX=1`) e o core servido acima do MCU, com as
+leituras de ROM e as escritas da tradução se revezando (`sms_rd_last`, ou `CICLONE_SMS_PRIO=1`).
+`CICLONE_SMS_TRACE=<arquivo>` registra o handshake dos buffers por ciclo de CLK2 (TICK, DONE, SWAP, NMI).
+O PSG ainda não toca na janela. `CICLONE_SMS=0` builda o runner sem o core.
+`CICLONE_VIDEO_LOG=<arquivo>` (qualquer jogo) registra um hash de cada quadro e se ele mudou.
 
 ### Escrevendo uma correção de áudio de savestate
 
@@ -406,8 +456,9 @@ Porque:
 - O **Caso 2** testa o **binário real**, mas com os periféricos **modelados**, não o silício.
 
 Na prática, a maioria das voltas fica no `run/dev.sh` / `run/test_menu.sh`; o hardware é pra fechar. Jogo
-LoROM/HiROM comum, o menu in-game, savestates, gestos e cheats rodam (ver *Jogos reais* acima), mas não
-cobre: cores de coprocessador (e as janelas de savestate deles), os espelhos de WRAM/VRAM/APU do `ctx.v`
+LoROM/HiROM comum, o menu in-game, savestates, gestos e cheats rodam (ver *Jogos reais* acima), e jogos de
+Master System no RTL do core SMS (ver *Jogos de Master System*), mas não cobre: os cores dos outros consoles
+(NES, GBC, Atari), cores de coprocessador (e as janelas de savestate deles), os espelhos de WRAM/VRAM/APU do `ctx.v`
 (o savestate sobrescreve o que tira deles com leitura direta do console, então só falta a imagem da APU
 no arquivo), timing de hardware nem áudio.
 
@@ -487,6 +538,7 @@ FW_SERVER_DIR=/home/eu/sd2snes       # árvore da firmware no host onde o .im3 f
 | `SERVER_DIR` | `build_menu.sh` | `ciclone-menu` |
 | `FW_SERVER_DIR`, `OBJ` | `fetch_m4fw.sh` | nenhum, `obj-mk3` |
 | `FW_OBJ_DIR` | `fetch_m4fw.sh`: copia `.im3` + `.elf` de um build **local** em vez de SSH | vazio |
+| `ASAR` | `build_sms_player.sh`: o asar de SNES (Asar 1.x) que monta o player do SMS; sem ele, o `asar` do PATH, senão o host de build, senão o `misc/sms_snes.bin` da árvore | vazio |
 
 Os ajustes do próprio runner (`CICLONE_SYNC`, `CICLONE_SPEED`, `CICLONE_TRACE_CMD`, `CICLONE_FIXED_TIME`,
 `CICLONE_MENU`) são variáveis de ambiente comuns, não vêm deste arquivo; veja
@@ -507,6 +559,8 @@ Os ajustes do próprio runner (`CICLONE_SYNC`, `CICLONE_SPEED`, `CICLONE_TRACE_C
 | `bash m4_unicorn/build.sh` | emulador LPC1756 (Unicorn) | `build/lpc_emu` |
 | `bash fpga_model/verilate.sh` | Verila o `main.v` (lado-MCU) | `build/vfpga/` |
 | `bash fpga_model/verilate_sim.sh` | Verila `sim_top.v` (both-sides) | `build/vfpga_sim/` |
+| `bash fpga_model/verilate_sms.sh` | Verila o core SMS (`sms_core.v` e abaixo) para o runner, só quando um `.v` mudou | `build/vsms/` |
+| `python3 tools/sms_run.py JOGO.sms` | um jogo de Master System pelo menu, headless, com métricas de quadro | `build/sms-run/<jogo>/` |
 | `build/host_runner_gui --gui build/sdcard.img` | **abre a janela do menu** | - |
 | `build/host_runner_fw --fw build/sdcard.img out.ppm 180` | menu headless -> frame | `out.ppm` |
 | `bash tools/fetch_m4fw.sh` | traz o par `.im3`+`.elf` do host de build (ou de `FW_OBJ_DIR`) | `build/m4fw/` |

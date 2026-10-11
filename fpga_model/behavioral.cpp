@@ -8,6 +8,7 @@
 // função do firmware faz SELECT...DESELECT em torno de UM comando, isso cobre o resto
 // sem depender de contagens de byte exatas.
 #include "fpga_model.h"
+#include "sms_model.h"
 #include "../include/ciclone_seam.h"
 #include <vector>
 #include <algorithm>
@@ -17,6 +18,8 @@
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
+
+extern "C" uint64_t ciclone_snes_time_mc(void);
 
 // Mutex global do modelo: o firmware (thread MCU) e o SNES (thread do bsnes) tocam o
 // MESMO FpgaModel. Lado MCU trava nas funcoes de seam abaixo; lado SNES trava via
@@ -48,6 +51,9 @@ namespace ciclone {
 static FpgaModel *g_active = nullptr;
 void       set_active_model(FpgaModel *m) { g_active = m; }
 FpgaModel *active_model() { return g_active; }
+
+// Built without the Verilated SMS core (sms_model.cpp not linked): no SMS emulation.
+__attribute__((weak)) SmsCore *make_sms_core(uint8_t *psram) { (void)psram; return nullptr; }
 
 namespace {
 
@@ -95,13 +101,21 @@ public:
   }
 
   // fpga_pgm: hardware reinicializa a BRAM SNESCMD na reconfig; PSRAM/SRAM externas ficam.
-  void reconfigure(int core) override { (void)core; memset(snescmd, 0, sizeof(snescmd)); phase = PH_CMD; }
+  void reconfigure(int core) override {
+    memset(snescmd, 0, sizeof(snescmd)); phase = PH_CMD;
+    // core 1 = fpga_sms: the Verilated SMS core takes over $E0-$E3/$EF (sms_model.cpp)
+    sms_on = false;
+    if (core == 1) {
+      if (!sms) sms = make_sms_core(psram.data());
+      if (sms) { sms->power_on(); sms_on = true; }
+    }
+  }
 
   // -------- lado MCU (SPI) --------
   void spi_select()   override { phase = PH_CMD; }
   void spi_deselect() override { phase = PH_CMD; }
   int  mcu_rdy()      override { return 1; }
-  uint8_t spi_txrx(uint8_t tx) override { return spi_byte(tx); }
+  uint8_t spi_txrx(uint8_t tx) override { spi_bytes++; return spi_byte(tx); }
 
   void dma_write(const uint8_t *buf, uint32_t len) override {
     for (uint32_t i = 0; i < len; i++) { psram[cursor & PSRAM_MASK] = buf[i]; cursor = (cursor + 1) & PSRAM_MASK; }
@@ -181,10 +195,37 @@ public:
     return std::max(got, m);
   }
   uint8_t  peek_snescmd(uint16_t off) override { return snescmd[off & (SNESCMD_SIZE - 1)]; }
+  int      sms_stats(char *buf, int n) override {
+    if (!sms_on) return 0;
+    int k = sms->stats(buf, n);
+    if (k > 0 && k < n) k += snprintf(buf + k, n - k, " mcu_mem=%llu", (unsigned long long)mcu_mem.load());
+    return k;
+  }
+  int sms_peek(const char *space, uint32_t addr, uint8_t *out, int n) override {
+    return sms_on ? sms->peek(space, addr, out, n) : -1;
+  }
+  std::atomic<uint64_t> mcu_mem{0};   // PSRAM bytes the MCU read/wrote over SPI (READMEM/WRITEMEM)
+  std::atomic<uint64_t> spi_bytes{0}; // every SPI byte
+  std::atomic<uint64_t> spi_tests{0}; // FPGA_CMD_TEST ($F0): one per pass of the firmware's game loop
   uint8_t  mapper() override { return map; }
 
 private:
   std::vector<uint8_t> psram;
+  SmsCore *sms = nullptr;       // the SMS core (fpga_sms loaded), see sms_model.h
+  bool     sms_on = false;
+  // ctx.v mirrors these SNES writes into PSRAM, each one a PSRAM cycle the SMS core waits for
+  static bool ctx_mirrored(uint32_t a) {
+    uint8_t bank = a >> 16; uint16_t off = a & 0xFFFF;
+    if ((bank & 0xFE) == 0x7E) return true;                               // WRAM banks
+    if (bank & 0x40) return false;
+    if (off < 0x2000) return true;                                        // WRAM mirror
+    if (off >= 0x2100 && off <= 0x2133) return true;                      // PPU incl. VRAM/CGRAM/OAM data
+    if (off >= 0x2141 && off <= 0x2143) return true;                      // APU ports
+    if (off >= 0x2180 && off <= 0x2183) return true;                      // WRAM port
+    if (off >= 0x4200 && off <= 0x420D) return true;
+    if ((off & 0xFF80) == 0x4300 && (off & 0xF) <= 0xA) return true;
+    return (a & 0xFFFFFE) == 0x002BF0;
+  }
   uint8_t  snescmd[SNESCMD_SIZE];
   uint32_t cursor, rom_mask, ram_mask;
   uint8_t  ram_base, map;
@@ -342,7 +383,7 @@ private:
         else if (tx == 0xd0) { phase = PH_SCADDR; cnt = 2; acc = 0; sc_idx = 0; }   // SNESCMD setaddr
         else if (tx == 0xd1) { phase = PH_SCREAD; }                                 // SNESCMD read
         else if (tx == 0xd2) { phase = PH_SCWRITE; sc_wr_first = 1; }               // SNESCMD write
-        else if (tx == 0xf0) { phase = PH_TEST; }                                   // TEST
+        else if (tx == 0xf0) { phase = PH_TEST; spi_tests++; }                                   // TEST
         else if (tx == 0xf1) { dac_advance(); phase = PH_STATUS; status_idx = 2; }  // GETSTATUS
         else if (tx == 0xfb) { phase = PH_SFX; cnt = 6; acc = 0; }                  // SFX_PLAY base+len
         else if (tx == 0xfc) { sfx_pos = sfx_len; phase = PH_SKIP; }                // SFX_DISABLE: abort the fetcher
@@ -361,8 +402,10 @@ private:
         return 0;
       case PH_RAMBASE: ram_base = tx; phase = PH_SKIP; return 0;
       case PH_WRITEMEM:
+        mcu_mem++;
         psram[cursor & PSRAM_MASK] = tx; if (mem_autoinc) cursor = (cursor + 1) & PSRAM_MASK; return 0;
       case PH_READMEM: {
+        mcu_mem++;
         uint8_t v = psram[cursor & PSRAM_MASK]; if (mem_autoinc) cursor = (cursor + 1) & PSRAM_MASK; return v;
       }
       case PH_SCADDR:  // d0: byte0=lo, byte1=hi
@@ -430,6 +473,27 @@ private:
   // dados do main.v: cheat.v (hooks, ROM cheats) > SNESCMD > IS_PATCH (identity) > mapper.
   uint8_t decode(uint32_t a, int rw, uint8_t d) {
     a &= 0xFFFFFF;
+    if (sms_on) {
+      // address.v SMS_BUF_HIT ($E0-$E3) and main.v's $EF control window (pad + swap)
+      uint8_t bk = a >> 16;
+      if ((bk & 0xFC) == 0xE0) {
+        if (rw) return 0;
+        uint64_t t = ciclone_snes_time_mc();
+        sms->cart_cycle(t);
+        return sms->buf_read(a);
+      }
+      if (bk == 0xEF) {
+        if (rw) { sms->run_to(ciclone_snes_time_mc()); sms->ctl_write(a, d); }
+        return 0;
+      }
+      if (!rw && !snescmd_window(a)) sms->cart_cycle(ciclone_snes_time_mc());   // player code: a ROM_HIT
+      // the core's snescmd_buf takes every SNES write (wea unlocked for the player's IGR combos)
+      if (rw && snescmd_window(a)) {
+        uint16_t i = a & (SNESCMD_SIZE - 1);
+        if (i == 0x200 || i == 0x202) trace_cmd("SNES", "write", i, d);
+        snescmd[i] = d; return 0;
+      }
+    }
     if (dma_window(a)) {                                   // above cheat.v in main.v's data mux
       int i = a & 0xF;
       if (rw) { if (i < 10) dma_reg_write(i, d); return 0; }
@@ -502,6 +566,7 @@ private:
 // The CPU pushed PB/PC/P (native mode: 4 pushes) and will fetch `vector` next. cheat.v arms
 // the hijack from the push pattern; bsnes tells us directly. Any other read disarms it.
 void Behavioral::cpu_vector_fetch(uint32_t vector, int native) {
+  if (sms_on && vector == 0xffea) sms->nmi(ciclone_snes_time_mc());
   if (vector == 0xffea) nmi_usage++;
   else if (vector == 0xffee) irq_usage++;
   uint8_t f = hook_flags;
@@ -588,6 +653,10 @@ void Behavioral::hook_write(uint32_t a, uint8_t d) {
 // ---------------------------------------------------------------- the rest of the cart edge
 void Behavioral::snoop(uint32_t a, uint8_t d, int write) {
   a &= 0xFFFFFF;
+  if (sms_on && write) {
+    if (ctx_mirrored(a)) sms->ctx_write(ciclone_snes_time_mc());
+    if (!(a & 0x400000) && (a & 0xFFFF) == 0x2100 && !(d & 0x80)) sms->screen_on(ciclone_snes_time_mc());
+  }
   if (a & 0x400000) return;                   // system area only ($00-$3F/$80-$BF)
   uint16_t off = a & 0xFFFF;
   if (!write) {                               // $4016 read: 16 reads end a manual poll
@@ -615,6 +684,7 @@ void Behavioral::snoop(uint32_t a, uint8_t d, int write) {
 }
 
 void Behavioral::snes_reset_strobe() {
+  if (sms_on) sms->snes_reset();
   snescmd_unlock = unlock_disable = vec_armed = false;
   vec_unlock = 0; locked_vec = 0xFFFFFF; reset_unlock = 2;
   if (hook_flags & HK_HOLDOFF) holdoff = HOLDOFF_FRAMES;
@@ -623,6 +693,17 @@ void Behavioral::snes_reset_strobe() {
 // ~one cheat.v usage window (2^21 clocks = 21.8 ms): pick the NMI hook if the game takes NMIs
 // (or nothing at all), the IRQ hook for an IRQ-only frame loop. Not clocked inside the hook.
 void Behavioral::snes_frame() {
+  if (sms_on) {
+    // what one pass of the firmware's game loop does on the SPI bus, from the host firmware's
+    // own traffic since the last frame (the loop tests the FPGA once per pass)
+    static uint64_t l_mem = 0, l_spi = 0, l_test = 0;
+    uint64_t m = mcu_mem.load(), sp = spi_bytes.load(), t = spi_tests.load();
+    uint64_t dm = m - l_mem, ds = sp - l_spi, dt = t - l_test;
+    l_mem = m; l_spi = sp; l_test = t;
+    if (dt) sms->mcu_load((double)dm / dt, (double)ds / dt);
+    else sms->mcu_load(0, 0);
+    sms->snes_frame(ciclone_snes_time_mc());
+  }
   if (holdoff) holdoff--;
   if (unlocked()) return;
   if (nmi_usage || !irq_usage) { auto_nmi = true; auto_irq = false; }
@@ -637,6 +718,8 @@ FpgaModel *make_behavioral_model() { return new Behavioral(); }
 } // namespace ciclone
 
 // -------- seam C (chamado pelo firmware via shims de HAL) --------
+// SNES time in master clocks (monotonic), from the runner; 0 = no clock (unit tests)
+extern "C" __attribute__((weak)) uint64_t ciclone_snes_time_mc(void) { return 0; }
 extern "C" {
 int  ciclone_mcu_busy(void)     { return g_mcu_busy.load(); }
 void ciclone_model_lock(void)   { g_model_mtx.lock(); }

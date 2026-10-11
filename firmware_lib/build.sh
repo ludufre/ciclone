@@ -16,7 +16,7 @@ SRC="${CICLONE_TREE:-$ROOT/extern/sd2snes}/src"   # CICLONE_TREE: another firmwa
 HAL="$ROOT/hal_host"
 INC="$ROOT/include"
 FPGA="$ROOT/fpga_model"
-BUILD="$ROOT/build"
+BUILD="${CICLONE_BUILD:-$ROOT/build}"   # CICLONE_BUILD: a build dir per tree (tools/sms_run.py)
 STAGE="$BUILD/fw_src"
 OBJ="$BUILD/obj"
 

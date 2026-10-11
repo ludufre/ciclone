@@ -1,7 +1,8 @@
 """Carga dos outros consoles e chips que o firmware estagia na PSRAM antes do boot: NES, Master
 System, Atari 2600, Game Boy (SGB), Sufami Turbo e SPC7110 com RTC.
 
-O modelo do FPGA não roda esses cores (trocar de core só reinicia o estado dele), então o que se
+O modelo do FPGA não roda esses cores (trocar de core só reinicia o estado dele; o do Master System
+roda como RTL, mas os jogos daqui são falsos -- jogo de verdade fica no test_sms.py), então o que se
 testa é a parte do FIRMWARE: a detecção, o pré-check dos arquivos de suporte (faltando = popup e
 o menu segue vivo), o estágio da imagem na PSRAM e a entrada no laço do jogo. Core, player e BIOS
 entram no cartão como arquivos FALSOS: o firmware só confere que existem e os copia."""

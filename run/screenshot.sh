@@ -9,7 +9,7 @@ bash tools/ensure_sd.sh
 [ -f "$BSNES/out/libsnes.a" ] || ( cd "$BSNES" && make platform=osx profile=compatibility library )
 clang++ -std=gnu++17 -O2 -I include -I fpga_model -I "$BSNES/snes/libsnes" \
   host_runner/runner.cpp fpga_model/behavioral.cpp \
-  build/libsd2snesfw.a "$BSNES/out/libsnes.a" -o build/host_runner_fw -lpthread
+  build/libsd2snesfw.a "$BSNES/out/libsnes.a" $(bash tools/sms_objs.sh) -o build/host_runner_fw -lpthread
 build/host_runner_fw --fw build/sdcard.img build/frame_fw.ppm "${1:-180}"
 python3 tools/ppm2png.py build/frame_fw.ppm build/frame_fw.png
 echo "OK: build/frame_fw.png"

@@ -12,9 +12,10 @@ cd "$(dirname "$0")/.."
 # isto uma mudança em src/*.c seria testada contra o runner da build anterior
 bash firmware_lib/build.sh >/dev/null
 BSNES=extern/bsnes-plus/bsnes
+SMS_OBJS="$(bash tools/sms_objs.sh)"   # the SMS core as RTL (Verilated), when Verilator is there
 clang++ -std=gnu++17 -O2 -I include -I fpga_model -I "$BSNES/snes/libsnes" \
   host_runner/runner.cpp fpga_model/behavioral.cpp build/libsd2snesfw.a "$BSNES/out/libsnes.a" \
-  -o build/host_runner_fw -lpthread
+  $SMS_OBJS -o build/host_runner_fw -lpthread
 if [ -z "${NO_BUILD:-}" ]; then
   if [ -n "${REF:-}" ]; then
     DEST="build/menu-$(echo "$REF" | tr '/' '_')"
@@ -37,7 +38,7 @@ CC="clang -fprofile-instr-generate -fcoverage-mapping" bash firmware_lib/build.s
 clang -c host_runner/cov_exit.c -o "$COV/cov_exit.o"
 clang++ -std=gnu++17 -O2 -fprofile-instr-generate -D_exit=cov_exit -I include -I fpga_model \
   -I "$BSNES/snes/libsnes" host_runner/runner.cpp fpga_model/behavioral.cpp build/libsd2snesfw.a \
-  "$BSNES/out/libsnes.a" "$COV/cov_exit.o" -o build/host_runner_fw_cov -lpthread
+  "$BSNES/out/libsnes.a" "$COV/cov_exit.o" $SMS_OBJS -o build/host_runner_fw_cov -lpthread
 bash firmware_lib/build.sh >/dev/null
 set +e
 LLVM_PROFILE_FILE="$PWD/$COV/%p.profraw" CICLONE_RUNNER="$PWD/build/host_runner_fw_cov" \

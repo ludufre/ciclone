@@ -198,10 +198,37 @@ static void apply_port1(void) {
   if (const char *p2 = getenv("CICLONE_PORT2"))
     if (!strcmp(p2, "mouse")) snes_set_controller_port_device(SNES_PORT_2, SNES_DEVICE_MOUSE);
 }
+// SNES time in master clocks, monotonic, for models that run their own clock against it (the
+// SMS core): completed frames + where the beam is since the point snes_run() stops at.
+static uint64_t g_mc_frames = 0;
+static unsigned g_mc_stop = 0;
+extern "C" uint64_t ciclone_snes_time_mc(void) {
+  const unsigned F = 1364 * 262;
+  return g_mc_frames * F + (ciclone_snes_frame_pos() + F - g_mc_stop) % F;
+}
+// Distinct pictures: a hash of every emulated frame against the one before -- the effective
+// frame rate of whatever runs (the HW twin is a video capture counted for repeated frames).
+// `video` (--serve) gives the totals; CICLONE_VIDEO_LOG=<file> one "<frame> <changed> <hash>"
+// line per frame.
+static uint64_t g_vid_frames = 0, g_vid_changed = 0, g_vid_last = 0;
+static FILE *g_vid_log = nullptr;
+static void video_frame(void) {
+  static bool init = false;
+  if (!init) { init = true; if (const char *f = getenv("CICLONE_VIDEO_LOG")) { g_vid_log = fopen(f, "w"); if (g_vid_log) setvbuf(g_vid_log, nullptr, _IOLBF, 0); } }
+  uint64_t h = 1469598103934665603ull, w;
+  size_t n = g_rgb.size(), i = 0;
+  for (; i + 8 <= n; i += 8) { memcpy(&w, &g_rgb[i], 8); h = (h ^ w) * 1099511628211ull; }
+  for (; i < n; i++) h = (h ^ g_rgb[i]) * 1099511628211ull;
+  bool changed = g_vid_frames == 0 || h != g_vid_last;
+  g_vid_frames++; g_vid_changed += changed; g_vid_last = h;
+  if (g_vid_log) fprintf(g_vid_log, "%ld %d %016llx\n", g_frame, (int)changed, (unsigned long long)h);
+}
 static void snes_frame(void) {
   if (ciclone_snes_reset_edge) { ciclone_snes_reset_edge = 0; snes_reset(); apply_port1(); }
   if (!ciclone_snes_in_reset) {
     snes_run();
+    g_mc_frames++; g_mc_stop = ciclone_snes_frame_pos();
+    video_frame();
     if (g_audio_level && g_level_n) {
       fprintf(g_audio_level, "%ld %.0f\n", g_frame, sqrt(g_level_ss / g_level_n));
       fflush(g_audio_level);
@@ -385,6 +412,9 @@ static void parse_shots(const char *arg) {
 //   menumask            o combo do menu in-game armado agora (a tecla M da janela) -> ok <hex>
 //   peek SPACE ADDR LEN hex; SPACE = wram vram cgram oam aram psram snescmd -> ok <hex>
 //   sdstat              leituras do cartão até agora: setores reinícios -> ok <n> <n>
+//   smspeek SPACE A L   o estado do core SMS: vram cram wram vreg bank pc (hex) -> ok <hex>
+//   video               quadros emulados e quantos mudaram em relação ao anterior -> ok <n> <n>
+//   sms                 contadores do core SMS (key=value ...; vazio sem o fpga_sms) -> ok <...>
 //   shot PATH           grava o último quadro em PPM             -> ok
 // CICLONE_RECORD=<prefixo>: grava o run inteiro (vídeo + som), ver record_open
 //   quit
@@ -455,6 +485,20 @@ static void serve_loop(ciclone::FpgaModel *m) {
     } else if (!strcmp(cmd, "dac")) {       // the MSU-1 DAC buffer: playing, read and write pointers
       ciclone_model_lock(); int on = m->dac_playing(), loud = m->dac_loud(); ciclone_model_unlock();
       fprintf(g_proto, "ok %d %d\n", on, loud); fflush(g_proto);
+    } else if (!strcmp(cmd, "sms")) {       // the SMS core's counters (key=value ...), "ok" alone without it
+      char buf[2048] = {0};
+      if (m->sms_stats(buf, sizeof buf) <= 0) buf[0] = 0;
+      fprintf(g_proto, "ok %s\n", buf); fflush(g_proto);
+    } else if (!strcmp(cmd, "smspeek")) {   // the SMS core's internals: vram cram wram vreg bank pc
+      char space[16] = {0}; unsigned addr = 0, len = 0;
+      if (sscanf(line, "smspeek %15s %x %x", space, &addr, &len) != 3 || len > 65536) { fprintf(g_proto, "err syntax\n"); fflush(g_proto); continue; }
+      std::vector<uint8_t> buf(len);
+      if (m->sms_peek(space, addr, buf.data(), (int)len) < 0) { fprintf(g_proto, "err space\n"); fflush(g_proto); continue; }
+      std::string out; static const char hx[] = "0123456789abcdef";
+      for (uint8_t v : buf) { out += hx[v >> 4]; out += hx[v & 15]; }
+      fprintf(g_proto, "ok %s\n", out.c_str()); fflush(g_proto);
+    } else if (!strcmp(cmd, "video")) {     // emulated frames so far and how many differed from the one before
+      fprintf(g_proto, "ok %llu %llu\n", (unsigned long long)g_vid_frames, (unsigned long long)g_vid_changed); fflush(g_proto);
     } else if (!strcmp(cmd, "sdstat")) {    // card reads so far: sectors and stream restarts
       uint64_t sec = 0, rst = 0;
       ciclone_sd_stats(&sec, &rst);

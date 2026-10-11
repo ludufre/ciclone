@@ -10,7 +10,7 @@ mkdir -p build
 clang++ -std=gnu++17 -O2 -DCICLONE_SDL $(sdl2-config --cflags) \
   -I include -I fpga_model -I "$BSNES/snes/libsnes" \
   host_runner/runner.cpp fpga_model/behavioral.cpp \
-  build/libsd2snesfw.a "$BSNES/out/libsnes.a" $(sdl2-config --libs) -lpthread \
+  build/libsd2snesfw.a "$BSNES/out/libsnes.a" $(bash tools/sms_objs.sh) $(sdl2-config --libs) -lpthread \
   -o build/host_runner_gui
 echo "OK: build/host_runner_gui"
 echo "Rode: build/host_runner_gui --gui build/sdcard.img"

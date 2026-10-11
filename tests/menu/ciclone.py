@@ -54,13 +54,13 @@ ROM_EXTS = (".sfc", ".smc")
 _rom_crcs: dict[tuple[str, int, float], int] = {}
 
 
-def game_rom(crc: int, what: str) -> bytes:
+def game_rom(crc: int, what: str, exts: tuple = ROM_EXTS) -> bytes:
     import zlib
     top = os.environ.get("CICLONE_ROMS") or str(ROOT / "roms")   # roms/ = git-ignored local dumps
     if not Path(top).expanduser().is_dir():
-        raise Skip(f"{what}: put SNES ROMs in roms/ (or set CICLONE_ROMS)")
+        raise Skip(f"{what}: put the ROMs in roms/ (or set CICLONE_ROMS)")
     for f in sorted(Path(top).expanduser().rglob("*")):
-        if f.suffix.lower() not in ROM_EXTS or not f.is_file():
+        if f.suffix.lower() not in exts or not f.is_file():
             continue
         st = f.stat()
         key = (str(f), st.st_size, st.st_mtime)
@@ -71,6 +71,34 @@ def game_rom(crc: int, what: str) -> bytes:
             data = f.read_bytes()
             return data[512:] if len(data) % 1024 == 512 else data
     raise Skip(f"{what} (CRC32 {crc:08x}) not found under {top}")
+
+
+def sms_player() -> bytes:
+    """The SMS player of the firmware tree (snes/sms/sms_snes.asm, assembled by
+    tools/build_sms_player.sh): the SNES half of the SMS core, so the one that pairs with the
+    RTL the runner was built from. Skip when it cannot be assembled here."""
+    r = subprocess.run(["bash", str(ROOT / "tools" / "build_sms_player.sh")], capture_output=True, text=True)
+    out = Path(os.environ.get("CICLONE_BUILD") or ROOT / "build") / "sms" / "sms_snes.bin"
+    if r.returncode or not out.exists():
+        raise Skip(f"sms_snes.bin: {(r.stdout + r.stderr).strip()[-200:]}")
+    return out.read_bytes()
+
+
+def parse_kv(line: str) -> dict:
+    """'a=1 b=2.5 c=x' -> {'a': 1, 'b': 2.5, 'c': 'x'} (the runner's counter lines)."""
+    out: dict = {}
+    for tok in line.split():
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        try:
+            out[k] = int(v)
+        except ValueError:
+            try:
+                out[k] = float(v.rstrip("%"))
+            except ValueError:
+                out[k] = v
+    return out
 
 
 # ---------------------------------------------------------------- símbolos / fonte
@@ -181,8 +209,14 @@ def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra:
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(data)
         env["SD_EXTRA"] = str(xdir)
-    subprocess.run(["bash", str(ROOT / "tools" / "make_sdimg.sh"), str(dest)], env=env, check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # hdiutil attach/newfs from two processes at once fail (the suite's threads, tools/sms_run.py
+    # runs side by side): one image at a time, machine-wide
+    import fcntl
+    (ROOT / "build").mkdir(exist_ok=True)
+    with open(ROOT / "build" / ".sdimg.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        subprocess.run(["bash", str(ROOT / "tools" / "make_sdimg.sh"), str(dest)], env=env, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return dest
 
 
@@ -359,6 +393,26 @@ class Menu:
         """The FPGA model's MSU-1 DAC is playing its 2 KB buffer (the one the MCU streams a
         .pcm into: FMV soundtrack, PCM player, the tour's welcome jingle)."""
         return self._cmd("dac").split()[0] == "1"
+
+    def sms(self) -> dict:
+        """The SMS core's counters (fpga_model/sms_model.cpp), {} when fpga_sms is not loaded or
+        the runner was built without the core. Frames: sms_frames (VDP frames), tr_started /
+        tr_skip_busy / tr_skip_gate (translation passes and the frames that had none), shown
+        (buffers the player swapped in) / swap_empty; z80_wait_rom (clock enables the Z80
+        spent waiting for PSRAM); nmi_lines_* (the player's NMI, in scanlines); grant_* (PSRAM
+        slots per client)."""
+        return parse_kv(self._cmd("sms"))
+
+    def sms_peek(self, space: str, addr: int, n: int) -> bytes:
+        """The SMS core's internals: vram (16 KB) cram (32) wram (8 KB) vreg (16 VDP registers)
+        bank (the Sega mapper's bank registers) pc (the Z80 address bus, 2 bytes)."""
+        return bytes.fromhex(self._cmd(f"smspeek {space} {addr:x} {n:x}"))
+
+    def video(self) -> tuple[int, int]:
+        """Emulated frames so far and how many of them differed from the frame before (the
+        effective frame rate of a game, as a capture of the TV would count it)."""
+        a, b = self._cmd("video").split()
+        return int(a), int(b)
 
     def dac_loud(self) -> int:
         """Bytes of the DAC's 2 KB buffer that are not silence: what a playing DAC loops."""

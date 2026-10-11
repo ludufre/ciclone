@@ -23,7 +23,7 @@ bash firmware_lib/build.sh >/dev/null && echo "   OK: build/libsd2snesfw.a"
 echo "== [4/7] host_runner (M1 raw + M2.C --sd2snes + M2 --fw) =="
 clang++ -std=gnu++17 -O2 -I include -I fpga_model -I "$BSNES/snes/libsnes" \
   host_runner/runner.cpp fpga_model/behavioral.cpp \
-  build/libsd2snesfw.a "$BSNES/out/libsnes.a" -o build/host_runner_fw -lpthread
+  build/libsd2snesfw.a "$BSNES/out/libsnes.a" $(bash tools/sms_objs.sh) -o build/host_runner_fw -lpthread
 echo "   OK: build/host_runner_fw"
 
 echo "== [5/7] M1: menu boota (emu_mode), captura frame =="

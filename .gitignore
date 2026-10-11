@@ -28,3 +28,6 @@ __pycache__/
 # ROMs locais para os testes de jogo (tests/menu/test_games.py); so o README e versionado
 /roms/*
 !/roms/README.md
+
+# per-tree build dirs a script may be pointed at (CICLONE_BUILD)
+/build-*/

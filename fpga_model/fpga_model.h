@@ -32,12 +32,16 @@ public:
 
   // ---- ciclo de vida ----
   virtual void    reset() {}
-  virtual void    reconfigure(int core) { (void)core; }  // fpga_pgm: troca core/mapper, zera SNESCMD
+  virtual void    reconfigure(int core) { (void)core; }  // fpga_pgm: troca core/mapper, zera SNESCMD (1 = fpga_sms)
 
   // ---- introspecção (testes/debug) ----
   virtual uint8_t *psram_ptr() { return nullptr; }
   virtual uint8_t  peek_snescmd(uint16_t off) { (void)off; return 0; }
   virtual uint8_t  mapper() { return 0; }
+  // the SMS core's counters ("key=value ..."), 0 when fpga_sms is not loaded
+  virtual int      sms_stats(char *buf, int n) { (void)buf; (void)n; return 0; }
+  // the SMS core's internals (SmsCore::peek: vram cram wram vreg bank pc), -1 without it
+  virtual int      sms_peek(const char *space, uint32_t addr, uint8_t *out, int n) { (void)space; (void)addr; (void)out; (void)n; return -1; }
 
   // ---- audio do cartucho (DAC MSU-1) ----
   // O fetcher de SFX do core base (sfxdma.v, FPGA_CMD_SFX_PLAY): toca um PCM da PSRAM
