@@ -50,7 +50,7 @@ FW_SRCS=(
   fpga_spi.c
   fileops.c ff.c ccsbcs.c strutil.c scratch.c
   filetypes.c sort.c
-  cfg.c cheat.c cheatcode.c cheatedit.c yaml.c yamlw.c savestate.c sgb.c hwinfo.c gameinfo.c cjkglyph.c
+  cfg.c cheat.c cheatcode.c cheatedit.c yaml.c yamlw.c savestate.c sgb.c hwinfo.c gameinfo.c cjkglyph.c qoa.c
   patch.c patch_copier.c patchmeta.c crc32.c crc16.c rle.c
   cic.c cover.c theme.c msu1.c sysinfo.c pcmplay.c memtest.c manual.c igmenu.c trainer.c
   sufami.c spc7110rtc.c nes.c nes_chr.c sms.c atari.c gbc.c wdiag.c xc.c
