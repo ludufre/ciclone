@@ -1104,6 +1104,24 @@ def test_tour_sd2snes_folder_card_saves(t):
     assert "ShowSd2snesFolder: true" in _cfg(t, sd), _cfg(t, sd)
 
 
+def test_tour_icons_card_saves(t):
+    """The 2.17 browser icons card asks: Yes (the saved default) on top, No turns them off."""
+    sd = t.sd(config=FRESH)
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_ICONS)
+    assert m.has(otr(f"onb_f{C_ICONS}_name")), m.text()
+    lit = _list_lit(m, otr("onb_text_yes"))
+    m.wait(lambda: lit(0) > lit(1) + 40, what="a barra em Sim (o valor salvo)")
+    m.press("DOWN")                        # -> No
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_GICHEATS))
+    _finish(m)
+    m.close()
+    assert "BrowserIcons: false" in _cfg(t, sd), _cfg(t, sd)
+
+
 def test_tour_competition_cart_round_scrolls(t):
     """Sixteen answers (3..18 min) do not fit under the text: the list scrolls with the bar
     and the menu's scroll bar shows. The bar starts on the saved 6 min; the last one is kept."""
