@@ -595,3 +595,139 @@ def test_click_on_an_option_sets_the_next_value(t):
     m.mouse_click("left")                         # past the last value: back to the first
     m.wait(lambda: m.psram(cfg, 1)[0] != v1, frames=300, what="a volta ao primeiro")
     assert m.psram(cfg, 1)[0] == v0
+
+
+def test_click_past_the_last_value_jumps_to_the_first(t):
+    """A click on the last value goes straight back to the first one: the dialog must not
+    walk down through every value in between (it used to, one per frame, on screen)."""
+    m = t.menu(env=MOUSE)
+    _to_option(m, "mtext_mm_cfg", "mtext_cfg_ingame", "mtext_ingame_shortreset")
+    cfg = 0xFF0100 + 0x9F
+    assert m.psram(cfg, 1)[0] == 3                # ROM (the default)
+    row = m.u8("bar_yl") + 1
+    _point(m, m.u8("window_x") * 4 + 24, 8 * row - 9)
+    m.mouse_click("left")
+    m.wait(lambda: m.psram(cfg, 1)[0] == 4, frames=300, what="Duração")
+    m.settle()
+    between = [c.encode_menu_text(c.tr(k)) for k in ("text_nav_rom", "text_nav_folder")]
+    m.mouse_click("left", hold=3, after=1)
+    seen = []
+    for _ in range(120):
+        m.step(1)
+        line = m.screen()[row]
+        seen += [k for k in between if k in line]
+        if m.psram(cfg, 1)[0] == 0:
+            break
+    assert m.psram(cfg, 1)[0] == 0, m.psram(cfg, 1)[0]
+    assert not seen, seen
+
+
+def test_pointer_moves_in_a_value_dialog(t):
+    m = t.menu(env=MOUSE)
+    _to_option(m, "mtext_mm_cfg", "mtext_cfg_browser", "mtext_browser_hide_ext")
+    m.press("A", pad=2)                           # the option's value dialog
+    m.wait(lambda: m.u8("mouse_mode") == 5, frames=120, what="o diálogo de valor")
+    _point(m, 60, 60, after=4)
+    assert _oam(m)[:2] == (60, 59), _oam(m)
+
+
+def test_cheat_keyboard_click_types_the_clicked_key(t):
+    m = _cheat_list_mouse(t)
+    _both(m)                                      # a new cheat
+    m.settle()
+    _both(m)                                      # add a code: the hex keyboard
+    m.settle()
+    assert m.u8("ce_kmode") == 0
+    _point(m, 4 * 14 + 1, 8 * 17 - 9)             # row 1 ("A B C D E F -"), key B
+    assert (m.u8("ce_krow"), m.u8("ce_kcol")) == (1, 1)  # the cursor followed the pointer
+    m.step(4)
+    assert _oam(m)[:2] == (4 * 14 + 1, 8 * 17 - 10), _oam(m)  # and so did the sprite
+    m.mouse_click("left")
+    m.settle(stable=6)
+    assert m.has("B_"), m.text()
+    _point(m, 4 * 20 + 1, 8 * 16 - 9)             # row 0, key 4
+    m.mouse_click("left")
+    m.settle(stable=6)
+    assert m.has("B4_"), m.text()
+
+
+def test_cheat_keyboard_right_click_deletes_and_held_right_cancels(t):
+    m = _cheat_list_mouse(t)
+    _both(m)                                      # a new cheat
+    m.settle()
+    _both(m)                                      # add a code: the hex keyboard
+    m.settle()
+    _point(m, 4 * 14 + 1, 8 * 17 - 9)             # key B
+    m.mouse_click("left")
+    m.settle(stable=6)
+    m.mouse_click("left")
+    m.settle(stable=6)
+    assert m.has("BB_"), m.text()
+    m.mouse_click("right")                        # a right click: Del
+    m.settle(stable=6)
+    assert m.has("B_") and not m.has("BB_"), m.text()
+    assert m.u8("ce_kmode") == 0 and m.has("A B C D E F"), m.text()  # still on the keyboard
+    _hold_right(m)                                # held: Cancel
+    m.settle(stable=6)
+    assert not m.has("A B C D E F"), m.text()
+
+
+def test_cheat_name_keyboard_follows_types_deletes_and_cancels(t):
+    m = _cheat_list_mouse(t)
+    _hold_right(m)                                # edit "First"
+    m.settle()
+    m.press("A", pad=2)                           # the name: the letters keyboard
+    m.settle()
+    assert m.u8("ce_kmode") == 1
+    _point(m, 4 * 36 + 1, 8 * 16 - 9, after=4)    # row 1 ("N O ... Z"), key Z
+    assert _oam(m)[:2] == (4 * 36 + 1, 8 * 16 - 10), _oam(m)
+    m.mouse_click("left")
+    m.settle(stable=6)
+    assert m.has("FirstZ_"), m.text()
+    m.mouse_click("right")                        # Del
+    m.settle(stable=6)
+    assert m.has("First_") and m.has("N O P Q"), m.text()
+    _hold_right(m)                                # Cancel
+    m.settle(stable=6)
+    assert not m.has("N O P Q") and m.has("First"), m.text()
+
+
+def test_menu_bar_jumps_to_the_pointer(t):
+    m = t.menu(env=MOUSE)
+    m.press("X", pad=2)                           # the main menu
+    m.settle()
+    wy, wh = m.u8("window_y"), m.u8("window_h")
+    _point(m, m.u8("window_x") * 4 + 30, 8 * (wy + 1) - 9)
+    m.settle(stable=6)
+    assert m.u8("listsel_sel") == 0
+    seen = []
+    m.mouse(0, 4 * (wh - 3))                      # one move (doubled) to the last item
+    for _ in range(14):
+        m.step(1)
+        seen.append(m.u8("listsel_sel"))
+    assert seen[-1] == m.u8("listsel_max") - 1, seen
+    assert len(set(seen)) <= 3, seen              # 0, last-1, last: no walk
+
+
+def test_language_change_keeps_the_bar_on_the_pointer(t):
+    """Changing the language by a click reopens the main menu with its bar on the first row;
+    the pointer rests on the last row (the Language entry), which is also the list's edge
+    zone. The bar must go straight back to the pointer, not walk down (the edge zone used to
+    step it down row by row)."""
+    m = t.menu(env=MOUSE)
+    m.press("X", pad=2)
+    m.settle()
+    wy, wh = m.u8("window_y"), m.u8("window_h")
+    last = wy + wh - 2
+    _point(m, m.u8("window_x") * 4 + 30, 8 * last - 9)
+    m.settle(stable=6)
+    lang = m.u8("cur_lang")
+    m.mouse_click("left", hold=3, after=1)
+    bars = []
+    for _ in range(80):
+        m.step(1)
+        bars.append(m.u8("bar_yl"))
+    assert m.u8("cur_lang") != lang
+    assert bars[-1] == last - 1, bars
+    walk = [b for b in bars if wy < b < last - 1]
+    assert len(walk) <= 2, bars                   # first row once at most, then the pointer's
