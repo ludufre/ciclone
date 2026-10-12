@@ -141,7 +141,7 @@ def otr(label, lang="en"):
 def para(n, lang="en", line=0):
     """A line of card n's paragraph (gen_onb_lang.py wraps it) as the screen decodes it."""
     raw = onb.STRINGS["onb_f%d_text" % n][onb.LANGS.index(lang)][line]
-    return c.encode_menu_text(raw.replace("[", "").replace("]", ""))   # button markup draws nothing
+    return c.encode_menu_text(raw.replace("[", "").replace("]", "").replace("|", ""))   # colour markup draws nothing
 
 
 def _enter_tour(m, lang="en", total=None, ask=True):
@@ -445,31 +445,38 @@ def test_tour_done_screen_key_is_green(t):
 
 def test_tour_buttons_in_the_text_are_green(t):
     """A button named in a card's paragraph is green like the key hints, the '+' between
-    two of them is not: L+R+Y+Left on the in-game menu card, in English and Portuguese."""
+    two of them is not: L+R+Y+Left on the in-game menu card, in English and Portuguese.
+    A |blue| run on the same card, when there is one, is blue (palette 3) -- including
+    the part a line break carried to the next line."""
     for lang, idx in (("en", 0), ("ptbr", 1)):
         m = t.menu(t.sd(config=FRESH + "Language: %d\n" % idx))
         _enter_tour(m, lang)
         _goto_card(m, C_IGM)
         m.step(30)
         lines = onb.STRINGS[f"onb_f{C_IGM}_text"][onb.LANGS.index(lang)]
-        k = next(i for i, l in enumerate(lines) if "[L]+[R]" in l)
-        raw = lines[k]
-        plain = raw.replace("[", "").replace("]", "")
-        row = m.row_of(c.encode_menu_text(plain))
-        assert row is not None, m.text()
-        x0 = m.screen()[row].index(c.encode_menu_text(plain))
-        col, green, x = {}, False, 0
-        for ch in raw:                     # expected colour of every printed cell
-            if ch in "[]":
-                green = not green
+        assert any("[L]+[R]" in l for l in lines), lines
+        for raw in lines:
+            if not any(ch in raw for ch in "[]|"):
                 continue
-            col[x] = green
-            x += 1
-        for i, want in col.items():
-            if plain[i] == " ":
-                continue
-            pal = m.tile_at(x0 + i, row)[1]
-            assert (pal == 2) == want, (lang, plain, i, plain[i], pal)
+            plain = raw.replace("[", "").replace("]", "").replace("|", "")
+            row = m.row_of(c.encode_menu_text(plain))
+            assert row is not None, (plain, m.text())
+            x0 = m.screen()[row].index(c.encode_menu_text(plain))
+            col, pal, x = {}, 0, 0
+            for ch in raw:                     # expected palette of every printed cell
+                if ch in "[]":
+                    pal = 0 if pal == 2 else 2
+                    continue
+                if ch == "|":
+                    pal = 0 if pal == 3 else 3
+                    continue
+                col[x] = pal
+                x += 1
+            for i, want in col.items():
+                if plain[i] == " ":
+                    continue
+                got = m.tile_at(x0 + i, row)[1]
+                assert got == want, (lang, plain, i, plain[i], got, want)
         m.close()
 
 

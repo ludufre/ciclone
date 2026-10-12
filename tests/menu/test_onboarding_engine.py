@@ -123,7 +123,7 @@ def otr(label, lang="en"):
 
 def para(label, lang="en"):
     """A paragraph's lines as the screen decodes them (the button markup draws nothing)."""
-    return [c.encode_menu_text(x.replace("[", "").replace("]", ""))
+    return [c.encode_menu_text(x.replace("[", "").replace("]", "").replace("|", ""))
             for x in onb.STRINGS[label][onb.LANGS.index(lang)]]
 
 
