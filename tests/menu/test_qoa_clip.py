@@ -17,7 +17,7 @@ MONO = (FIX / "v2_mono.qoa").read_bytes()          # 11000 frames, 1 ch
 STEREO_CRC, STEREO_LEN = 0xaf6737f1, 16597 * 4
 MONO_CRC, MONO_LEN = 0xea9f03e0, 11000 * 4         # mono is played on both channels
 INFO = "/sd2snes/info/TE/Test Game"
-RUN = 0xC00000 - 2048          # the PSRAM ROM area minus the pad the run ends with
+RUN = 0xC00000 - 0x21000 - 2048   # the PSRAM ROM area below the directory index, minus the pad
 
 
 def _card(t, **files):
