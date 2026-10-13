@@ -5,10 +5,11 @@ over a .pcm; a .qoa the DAC can't play (not 44.1 kHz, broken) falls back to the 
 The clips are the reference-encoded fixtures of the firmware's own decoder test
 (tests/host/qoa/), and the CRCs are of the reference decoder's output, so "decoded right" is
 checked against the reference, not against another port."""
+import time
 import zlib
 
 import ciclone as c
-from test_pcm_player import GI, PCM, _fmv
+from test_pcm_player import GI, PCM, TILES, _fmv
 
 FIX = c.SD2SNES / "tests" / "host" / "qoa"
 STEREO = (FIX / "v1_stereo.qoa").read_bytes()      # 16597 frames, 2 ch
@@ -99,3 +100,82 @@ def test_deleting_the_rom_takes_its_qoa_clip_audio(t):
     m.close()
     left = t.listdir(sd, "/sd2snes/info/TE")
     assert not [n for n in left if n.startswith("Test Game.")], left
+
+
+def _long_qoa(seconds: int) -> bytes:
+    """A valid mono QOA of near-silence, `seconds` long: zero LMS state and every slice at
+    scalefactor 0, index 0 -- what the decoder makes of it does not matter, only its length."""
+    total = 44100 * seconds
+    out = bytearray(b"qoaf" + total.to_bytes(4, "big"))
+    left = total
+    while left:
+        n = min(5120, left)
+        slices = (n + 19) // 20
+        out += bytes([1]) + (44100).to_bytes(3, "big") + n.to_bytes(2, "big")
+        out += (8 + 16 + slices * 8).to_bytes(2, "big") + bytes(16) + bytes(8 * slices)
+        left -= n
+    return bytes(out)
+
+
+def _two_clips(t):
+    """Two games with a 10 s clip each, the second's info bucket crowded like a real card, on a
+    card slow enough for that to show; the first clip is shown three seconds in."""
+    clip = _fmv(120)                                   # 10 s at 12 fps; its tiles are byte 0x40+i
+    extra = {}
+    for bb, stem, title in (("FI", "first", "Clip One"), ("SE", "second", "Clip Two")):
+        base = f"/sd2snes/info/{bb}/{stem}"
+        extra[base + ".yml"] = f'---\ntitle: "{title}"\nfmv: true\n'.encode()
+        extra[base + ".fmv"] = clip
+        extra[base + ".qoa"] = _long_qoa(10)
+    for i in range(1500):                              # a crowded info bucket, like a real card
+        extra[f"/sd2snes/info/SE/second filler {i:04d}.yml"] = b""
+    m = t.menu(t.sd(extra=extra), env={"CICLONE_SD_DELAY_US": "300"})
+    frame = lambda: m.psram(TILES, 1)[0] - 0x40
+    m.goto("Two Games/")
+    m.press("A")
+    m.wait(lambda: m.has("first.sfc"), what="the folder")
+    m.settle()
+    m.goto("first.sfc")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has("Clip One"), what="the first clip")
+    m.wait(lambda: frame() >= 36, frames=6000, what="three seconds into the first clip")
+    return m, frame
+
+
+def test_next_qoa_clip_starts_its_video_with_its_music(t):
+    """Up/Down on the info screen moves to the next game's clip. After the soundtrack starts the
+    load still makes a pass over the game's info folder for its guides, without decoding, and
+    on a card with thousands of files the DAC plays through the decoded lead-in and the decoder
+    holds it. The video clock is not updated while held, and the QOA path used to leave it at
+    the PREVIOUS clip's position: the new video jumped there and froze until the music caught
+    up (~7 s on a Mk.III). The new video has to start with its music."""
+    m, frame = _two_clips(t)
+    m.press("DOWN")
+    m.wait(lambda: m.has("Clip Two"), frames=1200, what="the next game's screen")
+    m.wait(lambda: m.fwlog().count("qoa: kick") == 2, frames=1200, what="its clip started")
+    seen = set()
+    t0 = time.time()
+    while time.time() - t0 < 1.5:                       # the DAC model runs on the wall clock
+        seen.add(frame())
+        m.step(4)
+    late = frame()
+    assert late < 30 and len(seen) >= 4, f"the new video froze: {sorted(seen)}, now {late}"
+    m.close()
+
+
+def test_next_qoa_clip_is_opened_once(t):
+    """Up/Down to a game with a clip: its GAME_INFO command opens the clip, and on a crowded card
+    the rest of that command (the soundtrack's lead-in, the guides pass over the info folder)
+    takes over 300 ms. The idle watchdog counted from the clip's opening, so it stopped the clip
+    the moment the command ended and the first frame request opened the video and the music
+    all over again: two more passes over the folder on every press."""
+    m, frame = _two_clips(t)
+    m.press("DOWN")
+    m.wait(lambda: m.has("Clip Two"), frames=1200, what="the next game's screen")
+    m.wait(lambda: m.fwlog().count("qoa: kick") >= 2, frames=1200, what="its clip started")
+    t0 = time.time()
+    while time.time() - t0 < 1.5:
+        m.step(4)
+    assert frame() > 0, "the new video did not play"
+    assert m.fwlog().count("qoa: kick") == 2, "a clip was opened twice"
+    m.close()

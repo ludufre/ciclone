@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define SECTOR_SIZE 512u
 
@@ -51,6 +52,15 @@ int ciclone_sd_read(uint32_t lba, uint8_t *buf, uint32_t count) {
     if (t && *t) trace = fopen(t, "w");
   }
   if (trace) { fprintf(trace, "%u %u\n", lba, count); fflush(trace); }
+  /* CICLONE_SD_DELAY_US=<us>: wall-clock cost of every read command (the card's access time;
+     a directory pass is one command per sector).  The DAC model runs on the wall clock, so
+     this is what lets a slow card starve it the way a real one does. */
+  static long delay_us = -1;
+  if (delay_us < 0) {
+    const char *d = getenv("CICLONE_SD_DELAY_US");
+    delay_us = (d && *d) ? atol(d) : 0;
+  }
+  if (delay_us) usleep((useconds_t)delay_us);
   for (uint32_t i = 0; i < count; i++) {
     if (!g_rd_streaming || lba + i != g_rd_last + 1) g_rd_restarts++;
     g_rd_last = lba + i;
