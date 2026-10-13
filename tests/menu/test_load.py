@@ -61,6 +61,25 @@ def test_boot_hands_over_a_clean_ppu(t):
         assert dirty == 0, f"{space}: {dirty} bytes não zerados"
 
 
+
+def test_header_rom_size_larger_than_the_file_still_boots(t):
+    """Um cabeçalho que declara mais ROM do que o arquivo tem (uma ROM de 128 KB dizendo 8 MB)
+    não pode decidir o mapeamento: no LoROM uma máscara acima de 4 MB leva os bancos $00-$7F
+    para a metade de cima, onde nada foi carregado, e o vetor de reset cai no vazio. O console
+    real só enxerga os chips, então a máscara segue o tamanho do arquivo."""
+    rom = bytearray(fx.lorom("CICLONE BIG HEADER"))
+    rom[0x7FD7] = 0x0D                                  # 8 MB no cabeçalho
+    m = t.menu(t.sd(extra={"/Big Header.sfc": bytes(rom)}))
+    m.goto("Big Header.sfc")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="a ficha")
+    m.press("A")
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=900, what="o boot da ROM")
+    m.step(30)
+    assert "rommask=1ffff" in m.fwlog()
+    pc = m.cpu()[0] & 0x7FFFFF                          # a ROM é um "bra *" em $00:8000
+    assert 0x8000 <= pc < 0x8003, hex(m.cpu()[0])
+
 LISTS = {
     "/sd2snes/lastgame.cfg": b"/Test Game.sfc\n/MSU Game/msugame.sfc\n",
     "/sd2snes/favorites.cfg": b"/Two Games/second.sfc\n",
