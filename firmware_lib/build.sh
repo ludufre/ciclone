@@ -28,14 +28,16 @@ CFLAGS="$CFLAGS -Wno-int-conversion -Wno-incompatible-pointer-types"
 # Evita colisao com a API libsnes (snes_init/snes_reset existem nos dois): renomeia
 # as funcoes de controle do console do firmware. Token-based, nao afeta snes_reset_loop/_pulse.
 CFLAGS="$CFLAGS -Dsnes_init=fw_snes_init -Dsnes_reset=fw_snes_reset"
-# The NSF player's core is an ARM image on the card on the console (nsfplay.bin); a host
-# build cannot run it, so nsfhost.c links nsf.c/nsfapu.c directly instead.
-CFLAGS="$CFLAGS -DNSF_HOST_LINKED"
+# Card modules (the NSF player) are ARM images on the card on the console; a host build
+# cannot run them, so module.c links them in directly instead.
+CFLAGS="$CFLAGS -DMODULE_HOST_LINKED"
 # -I order: hal_host (shadows) -> include (seam) -> src -> src/lpc175x.
 # lpc175x is LAST so hal_host/spi.h and hal_host/timer.h shadow lpc175x/spi.h
 # and lpc175x/timer.h; the non-shadowed HAL headers (clock/led/power/rtc/
 # sdnative/usbhw) still resolve there.
 CPPFLAGS="-I $HAL -I $INC -I $SRC -I $SRC/lpc175x -I $SRC/include"
+# card modules keep their own headers next to them (src/nsfplay/)
+CPPFLAGS="$CPPFLAGS -I $SRC/modules/nsfplay"
 # Force-include the host config.h first in every TU so its shadow (and the real
 # include-guard claims inside it) are set before any src/ header can pull the
 # real config.h/bits.h via the includer-directory rule.
@@ -56,7 +58,7 @@ FW_SRCS=(
   cfg.c cheat.c cheatcode.c cheatedit.c yaml.c yamlw.c savestate.c sgb.c hwinfo.c gameinfo.c cjkglyph.c qoa.c dirindex.c
   patch.c patch_copier.c patchmeta.c crc32.c crc16.c rle.c
   cic.c cover.c theme.c msu1.c sysinfo.c pcmplay.c memtest.c manual.c igmenu.c trainer.c
-  nsfhost.c nsf.c nsfapu.c
+  module.c modules/nsfplay/nsfmod.c modules/memtest/mtmod.c modules/pcmplay/pcmmod.c nsf.c nsfapu.c
   sufami.c spc7110rtc.c nes.c nes_chr.c sms.c atari.c gbc.c wdiag.c xc.c
   usbinterface.c
 )
