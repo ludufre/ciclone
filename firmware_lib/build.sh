@@ -58,7 +58,7 @@ FW_SRCS=(
   cfg.c cheat.c cheatcode.c cheatedit.c yaml.c yamlw.c savestate.c sgb.c hwinfo.c gameinfo.c cjkglyph.c qoa.c dirindex.c
   patch.c patch_copier.c patchmeta.c crc32.c crc16.c rle.c
   cic.c cover.c theme.c msu1.c sysinfo.c pcmplay.c memtest.c manual.c igmenu.c trainer.c
-  module.c modules/nsfplay/nsfmod.c modules/memtest/mtmod.c modules/pcmplay/pcmmod.c nsf.c nsfapu.c
+  module.c modules/nsfplay/nsfmod.c modules/memtest/mtmod.c modules/pcmplay/pcmmod.c modules/rtc7110/rtcmod.c nsf.c nsfapu.c
   sufami.c spc7110rtc.c nes.c nes_chr.c sms.c atari.c gbc.c wdiag.c xc.c
   usbinterface.c
 )

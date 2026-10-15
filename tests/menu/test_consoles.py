@@ -266,7 +266,8 @@ def test_spc7110_with_rtc(t):
     sd = t.sd(extra={"/Rtc.sfc": _spc7110(0xF9), "/sd2snes/fpga_spc7110.bi3": CORE})
     m = _load(t, sd, "Rtc.sfc")
     _booted(m, experimental=False)
-    assert "SPC7110 RTC:" in m.fwlog(), m.fwlog()[-2000:]
+    # the battery is the card module rtc7110.bin (linked in here): it found no battery
+    assert "SPC7110 RTC: core without the battery" in m.fwlog(), m.fwlog()[-2000:]
     m.close()
 
 
