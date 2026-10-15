@@ -161,3 +161,22 @@ def test_nsf_that_is_not_one_shows_the_error(t):
     m.settle()
     assert m.selected() == "Bad.nsf"
     m.close()
+
+
+def test_nsf_player_greys_the_browser_like_a_modal(t):
+    """The list behind the player's window goes grey, as under every modal, and comes back."""
+    m = t.menu(t.sd(extra={"/Two Games/Tune.nsf": _nsf()}))
+    m.goto("Two Games/")
+    m.press("A")
+    m.wait(lambda: m.has("Tune.nsf"), what="the folder")
+    m.settle()
+    bright = m.tile_at(8, 9)[1]
+    m.goto("Tune.nsf")
+    m.press("A")
+    m.wait(lambda: m.psram(BLK, 2) == b"NF" and _state(m) == PLAYING, what="the tune playing")
+    m.settle(stable=4)
+    assert m.tile_at(8, 9)[1] != bright, "the browser is not grey behind the NSF player"
+    m.press("B")
+    m.settle()
+    assert m.tile_at(8, 9)[1] == bright, "the browser did not come back"
+    m.close()
