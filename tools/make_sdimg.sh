@@ -71,7 +71,7 @@ if [ "${SD_FIXTURES:-1}" = "1" ]; then
   COPYFILE_DISABLE=1 cp -RX "$ROOT/build/sd_fixtures/" "$MNT/"
 fi
 # SD_EXTRA=<dir>: árvore copiada por cima (arquivos específicos de um teste)
-[ -n "${SD_EXTRA:-}" ] && COPYFILE_DISABLE=1 cp -RX "$SD_EXTRA/" "$MNT/"
+[ -n "${SD_EXTRA:-}" ] && COPYFILE_DISABLE=1 cp -RpX "$SD_EXTRA/" "$MNT/"   # -p: a test may date a file
 # o kernel do macOS grava ._* (xattrs como com.apple.provenance) em FAT mesmo com cp -X;
 # apagar o ._ apaga o xattr. Os metadados de volume do macOS também saem (o browser do
 # menu listaria .fseventsd como pasta).

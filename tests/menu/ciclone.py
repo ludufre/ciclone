@@ -172,7 +172,8 @@ def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra:
             onboarding: bool = True, misc: bool = False, lang: bool = True,
             size_mb: int | None = None, cluster: int | None = None) -> Path:
     """Imagem do cartão com o menu do pacote. `config` = conteúdo do config.yml inicial;
-    `extra` = {caminho no cartão: bytes} gravados por cima da árvore de teste;
+    `extra` = {caminho no cartão: bytes, ou (bytes, mtime)} gravados por cima da árvore de
+    teste (o mtime, em segundos da época, vira a data do arquivo no FAT);
     `onboarding=False` deixa o onboarding.bin (ROM do tour) fora do cartão;
     `lang=False` deixa os idiomas CJK (/sd2snes/lang/*.bin) fora do cartão;
     `misc=True` põe os arquivos de som que o release traz (menu.spc, sfx_*.pcm e o clipe
@@ -207,7 +208,12 @@ def make_sd(dest: Path, config: str | None = None, fixtures: bool = True, extra:
         for path, data in extra.items():
             f = xdir / path.lstrip("/")
             f.parent.mkdir(parents=True, exist_ok=True)
+            mtime = None
+            if isinstance(data, tuple):
+                data, mtime = data
             f.write_bytes(data)
+            if mtime is not None:
+                os.utime(f, (mtime, mtime))
         env["SD_EXTRA"] = str(xdir)
     # hdiutil attach/newfs from two processes at once fail (the suite's threads, tools/sms_run.py
     # runs side by side): one image at a time, machine-wide

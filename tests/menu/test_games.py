@@ -5,6 +5,8 @@ roms/ (git-ignored) or $CICLONE_ROMS (see ciclone.game_rom) and is skipped when 
 Asserts read the game's own WRAM state (game mode, player position), so they do not depend on
 pixels or exact frame counts.
 """
+import re
+import time
 from pathlib import Path
 
 import ciclone as c
@@ -461,3 +463,89 @@ def test_pad2_savestate_saves_once(t):
     m.step(300)
     saves = m.fwlog().count(f"file_open ({SMW_STATE}, 0a)")
     assert saves == 1, f"{saves} state writes"
+
+
+def _ovl_text(m):
+    """The in-game menu's text: it draws straight into VRAM (mode 5, BG2 at word $5000 = the
+    even columns, BG1 at $5800 = the odd ones, 32 words a row), not into the menu's buffers."""
+    bg2 = m.peek("vram", 0x5000 * 2, 32 * 32 * 2)
+    bg1 = m.peek("vram", 0x5800 * 2, 32 * 32 * 2)
+    rows = []
+    for y in range(32):
+        line = []
+        for x in range(64):
+            buf = bg2 if x % 2 == 0 else bg1
+            off = (y * 32 + x // 2) * 2
+            tile = (buf[off] | buf[off + 1] << 8) & 0x3FF
+            ch = tile >> 1 if tile < 0x200 else 0
+            line.append(c.FONT.get(ch, " " if ch < 32 else "?"))
+        rows.append("".join(line).rstrip())
+    return "\n".join(rows)
+
+
+def test_ingame_saves_tab_shows_each_slots_date(t):
+    """The SAVES tab of the in-game menu: the date of each slot's save next to it, from the
+    saves block the firmware stages at the game load, in the menu language's order."""
+    srm = "/sd2snes/saves/SU/Super Mario World.02.srm"
+    t0 = time.mktime((2026, 10, 15, 13, 42, 0, 0, 0, -1))
+    m = _smw_in_yoshis_house(t, extra={srm: (b"\0" * 2048, t0)})
+    m.hold(*m.menu_combo())
+    m.step(20)
+    m.release()
+    m.wait(lambda: m.rgb(12, 10) == TAB_ON, frames=120, what="the in-game menu")
+    for _ in range(6):
+        if "10/15/2026 13:42" in _ovl_text(m):
+            break
+        m.press("RIGHT", hold=6, after=40)
+    text = _ovl_text(m)
+    row = next((r for r in text.splitlines() if "10/15/2026 13:42" in r), None)
+    assert row is not None and re.search(r"2\s+10/15/2026 13:42", row), text
+    # only the active slot's "SLOT n" is green: slot 2's date stays plain text
+    lines = text.splitlines()
+    y2 = lines.index(row)
+    y1 = next(i for i, r in enumerate(lines) if re.search(r"SLOT\s+1\b", r))
+    assert _ovl_pal(m, row.index("10/15/2026"), y2) == 0, "the date came out green"
+    assert _ovl_pal(m, lines[y1].index("SLOT"), y1) == 2, "the active slot is not green"
+    assert _ovl_pal(m, row.index("SLOT"), y2) == 0
+
+
+def _ovl_pal(m, x, y):
+    """Palette of in-game menu cell x, y (the tilemap word's bits 10-12, see _ovl_text)."""
+    base = 0x5000 if x % 2 == 0 else 0x5800
+    w = m.peek("vram", (base + y * 32 + x // 2) * 2, 2)
+    return (w[0] | w[1] << 8) >> 10 & 7
+
+
+SS_SLOT = 0xFE100F                       # the savestate handler's slot (CS_SLOT), 1..4
+SMW_SLOT = "/sd2snes/saves/SU/Super Mario World.slot"
+
+
+def test_savestate_slot_picked_in_game_is_remembered(t):
+    """Select+Right picks savestate slot 2 in the game; leaving it writes that to the game's
+    .slot sidecar (byte 1, the battery-save byte kept), and the next start comes back on it."""
+    rom = c.game_rom(SMW, "Super Mario World (USA)")
+    sd = t.sd(config="---\nEnableSavestateSlots: true\n", extra={"/Super Mario World.sfc": rom})
+    m = t.menu(sd)
+    m.goto("Super Mario World.sfc")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game card")
+    m.press("A")
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="the ROM boot")
+    assert m.psram(SS_SLOT, 1)[0] & 0x7F == 1
+    m.wait(lambda: m.u8(SMW_MODE) == 0x07, frames=900, what="the title screen")
+    m.step(600)                                         # past the hooks' holdoff after the boot
+    m.hold("SEL", "RIGHT")                              # default IngameButtonsChangeState + Right
+    m.step(20)
+    m.release()
+    m.wait(lambda: m.psram(SS_SLOT, 1)[0] & 0x7F == 2, frames=300, what="slot 2")
+    m.hold("L", "R", "SEL", "X")                        # back to the menu
+    m.step(30)
+    m.release()
+    m.wait(lambda: "Super Mario World.sfc" in m.list_names(), frames=1200, what="the menu")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game card again")
+    m.press("A")
+    m.wait(lambda: m.fwlog().count("going to snes main loop") == 2, frames=1800, what="the reboot")
+    assert m.psram(SS_SLOT, 1)[0] & 0x7F == 2, "the game did not start on the slot picked last time"
+    m.close()
+    assert t.read(sd, SMW_SLOT) == b"12", t.read(sd, SMW_SLOT)

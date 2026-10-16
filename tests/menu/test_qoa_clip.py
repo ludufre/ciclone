@@ -18,6 +18,9 @@ STEREO_CRC, STEREO_LEN = 0xaf6737f1, 16597 * 4
 MONO_CRC, MONO_LEN = 0xea9f03e0, 11000 * 4         # mono is played on both channels
 INFO = "/sd2snes/info/TE/Test Game"
 RUN = 0xC00000 - 0x21000 - 2048   # the PSRAM ROM area below the directory index, minus the pad
+# What the first kick asks the fetcher for: the run and its pad, but under 8 MB -- on the base
+# core with the mono body, bit 23 of the length is that flag (msu1.c MENUQOA_RUNCAP).
+KICK = min(RUN + 2048, 0x7FF000)
 
 
 def _card(t, **files):
@@ -40,7 +43,7 @@ def _decoded(m, n):
 def test_qoa_clip_is_decoded_into_psram_and_played_by_the_fetcher(t):
     m = t.menu(_card(t, **{".qoa": STEREO, ".pcm": PCM}))
     _open_info(m)
-    m.wait(lambda: m.sfx() == (0, RUN + 2048), what="the fetcher armed on the decoded clip")
+    m.wait(lambda: m.sfx() == (0, KICK), what="the fetcher armed on the decoded clip")
     m.wait(lambda: m.dac_playing(), what="the DAC playing")
     m.wait(lambda: _decoded(m, STEREO_LEN) == STEREO_CRC, frames=600, what="the whole clip decoded")
     # the clip is laid out back to back until the area is full, then its start once more,
@@ -65,7 +68,7 @@ def test_qoa_clip_is_decoded_into_psram_and_played_by_the_fetcher(t):
 def test_mono_qoa_plays_on_both_channels(t):
     m = t.menu(_card(t, **{".qoa": MONO}))
     _open_info(m)
-    m.wait(lambda: m.sfx() == (0, RUN + 2048), what="the fetcher armed")
+    m.wait(lambda: m.sfx() == (0, KICK), what="the fetcher armed")
     m.wait(lambda: _decoded(m, MONO_LEN) == MONO_CRC, frames=600, what="the clip decoded")
     m.close()
 
@@ -78,7 +81,7 @@ def test_qoa_the_dac_cannot_play_falls_back_to_the_pcm(t):
     m.wait(lambda: m.dac_playing(), what="the .pcm playing")
     m.step(60)
     assert "qoa: kick" not in m.fwlog()
-    assert m.sfx() != (0, RUN + 2048)
+    assert m.sfx() != (0, KICK)
     m.close()
 
 

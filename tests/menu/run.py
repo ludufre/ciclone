@@ -62,7 +62,7 @@ class T:
             for f in sorted((c.SD2SNES / "misc").glob("*")):
                 if f.is_file():
                     h.update(f.read_bytes())
-        h.update(repr((config, fixtures, onboarding, misc, lang, size_mb, cluster, sorted((k, hashlib.sha1(v).hexdigest()) for k, v in (extra or {}).items()))).encode())
+        h.update(repr((config, fixtures, onboarding, misc, lang, size_mb, cluster, sorted((k, hashlib.sha1(v[0] if isinstance(v, tuple) else v).hexdigest(), v[1] if isinstance(v, tuple) else None) for k, v in (extra or {}).items()))).encode())
         for f in ("tools/make_sdimg.sh", "tools/sd_fixtures.py", "tests/menu/ciclone.py"):
             h.update((c.ROOT / f).read_bytes())
         for f in ("savestate_inputs.yml", "savestate_fixes.yml"):     # copied onto every card

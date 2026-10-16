@@ -1,6 +1,6 @@
-"""System Information (a tela que o menu monta a partir do bloco SI2 que a firmware publica),
-"Excluir save" pelo menu de contexto e tirar um jogo de Favoritos e de Recentes pelo menu de
-contexto das listas."""
+"""System Information (a tela que o menu monta a partir do bloco SI2 que a firmware publica) e
+tirar um jogo de Favoritos e de Recentes pelo menu de contexto das listas.  (Apagar um save
+vive na tela de Saves: test_saves_screen.py.)"""
 import ciclone as c
 
 SI2 = 0xFF1200                    # SYSINFO_BLK: magic 'S','I' + versão
@@ -49,20 +49,6 @@ def test_system_information(t):
     m.wait_gone("Firmware version:")
     m.settle()
     m.close()
-
-
-def test_delete_save_file(t):
-    sd = t.sd(extra={"/sd2snes/saves/TE/Test Game.srm": b"\x5a" * 2048})
-    m = t.menu(sd)
-    m.goto("Test Game.sfc")
-    m.press("Y")
-    m.settle()
-    _row(m, "text_filesel_context_delete_srm")
-    m.press("A")
-    _confirm_yes(m)
-    m.close()
-    assert "Test Game.srm" not in t.listdir(sd, "/sd2snes/saves/TE")
-    assert "Test Game.sfc" in t.listdir(sd, "/")   # a ROM fica
 
 
 def test_remove_from_favorites(t):
