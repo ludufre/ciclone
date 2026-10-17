@@ -50,7 +50,7 @@ mkdir -p "$STAGE" "$OBJ"
 # Everything except: lpc175x/* (HAL), usb*.c (USB stack), fpga.c (GPIO bit-bang),
 # printf.c (clashes with libc stdio). Those are replaced by hal_host/*.
 FW_SRCS=(
-  main.c menucmd.c
+  main.c menucmd.c fileman.c
   snes.c memory.c smc.c bootleg.c psram_io.c
   fpga_spi.c
   fileops.c ff.c ccsbcs.c strutil.c scratch.c
@@ -58,8 +58,8 @@ FW_SRCS=(
   cfg.c cheat.c cheatcode.c cheatedit.c yaml.c yamlw.c savestate.c sgb.c hwinfo.c gameinfo.c cjkglyph.c qoa.c dirindex.c
   patch.c patch_copier.c patchmeta.c crc32.c crc16.c rle.c
   cic.c cover.c theme.c msu1.c sysinfo.c pcmplay.c memtest.c manual.c igmenu.c trainer.c
-  module.c modules/nsfplay/nsfmod.c modules/memtest/mtmod.c modules/pcmplay/pcmmod.c modules/rtc7110/rtcmod.c nsf.c nsfapu.c
-  sufami.c spc7110rtc.c nes.c nes_chr.c sms.c atari.c gbc.c wdiag.c xc.c
+  module.c modules/nsfplay/nsfmod.c modules/memtest/mtmod.c modules/pcmplay/pcmmod.c modules/rtc7110/rtcmod.c modules/fileops/fopmod.c nsf.c nsfapu.c
+  sufami.c spc7110rtc.c nes.c nes_chr.c nesave.c sms.c atari.c gbc.c wdiag.c xc.c
   usbinterface.c
 )
 # M2.5: usbinterface.c (servidor FxPakPro REAL) entra no build. CDC_block_send/init

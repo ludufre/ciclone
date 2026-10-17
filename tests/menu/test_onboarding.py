@@ -65,7 +65,7 @@ def test_seen_tour_starts_with_no_question(t):
     m = t.menu(t.sd(config="---\nOnboardingVersion: 1\nLanguage: 1\n"))
     m.wait(lambda: "/sd2snes/onboarding.bin" in m.fwlog(), frames=900, what="a carga do tour")
     assert not m.has(c.encode_menu_text(c.tr("text_onbg_question", "ptbr"))), m.text()
-    m.wait(lambda: m.has("1/6"), frames=1500, what="o primeiro card do tour")
+    m.wait(lambda: m.has("1/7"), frames=1500, what="o primeiro card do tour")
     m.step(30)
     assert m.has(otr(f"onb_f{SECTION_218}_name", "ptbr")), m.text()
 
@@ -84,10 +84,10 @@ def test_seen_tour_missing_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 46         # card descriptors (onb_feat_table); the header counts the ones shown
+NCARDS = 47         # card descriptors (onb_feat_table); the header counts the ones shown
 MORE_CARD = 32      # "and more": the base tour's last card, 8 items
 SECTION_CARD = 33   # the 2.17 section's opening card, then the release's cards (34..40)
-SECTION_218 = 41    # the 2.18 section's opening card, then its cards (42..46)
+SECTION_218 = 41    # the 2.18 section's opening card, then its cards (42..47)
 MORE_ITEMS = 8
 # the cards by descriptor number (onb_fN_name)
 C_THEME, C_OUTLINE, C_AA, C_COVERS, C_COVLISTS, C_GI, C_VIDEO, C_CLIPMUSIC = 2, 3, 4, 5, 6, 7, 8, 9
@@ -95,7 +95,7 @@ C_MUSIC, C_RANDOM, C_SFX, C_MSU, C_PCM, C_SD2SNESDIR, C_RESET, C_CHEATLIST = 10,
 C_IGM, C_STATES, C_SAVES, C_TRAINER, C_PATCHES, C_CREATEROM, C_CHIPS = 18, 19, 20, 21, 22, 23, 24
 C_SUFAMI, C_CCTIME, C_CONSOLES, C_ATARI, C_FOLDERS, C_MEMTEST, C_LED = 25, 26, 27, 28, 29, 30, 31
 C_PAD2, C_GBC, C_HOOKLIST, C_SETA, C_COL20, C_ICONS, C_GICHEATS = 34, 35, 36, 37, 38, 39, 40
-C_RP2040, C_MOUSE, C_PLAYERS, C_NSF, C_SAVESCR = 42, 43, 44, 45, 46
+C_RP2040, C_MOUSE, C_PLAYERS, C_NSF, C_SAVESCR, C_FILEMGR = 42, 43, 44, 45, 46, 47
 # Cards shown on one board only (ONB_FF_MK3ONLY / ONB_FF_MK2ONLY): the Ciclone is a Mk.III,
 # so the Mk.II's LED card is left out of every walk and of the header's count.
 MK3ONLY = (C_CONSOLES, C_ATARI, C_GBC)
@@ -385,6 +385,12 @@ def test_tour_218_section(t):
     assert m.has(para(C_SAVESCR)), m.text()
     assert c.UNKNOWN not in m.text(), m.text()
     m.press("RIGHT")
+    m.wait_text(hdr(C_FILEMGR))
+    m.step(30)
+    assert m.has(otr(f"onb_f{C_FILEMGR}_name")), m.text()
+    assert m.has(para(C_FILEMGR)), m.text()
+    assert c.UNKNOWN not in m.text(), m.text()
+    m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
 
 
@@ -392,32 +398,36 @@ def test_tour_new_release_shows_only_its_cards(t):
     """A card that was already seen under an older tour version stays out: with version 1
     saved (the tour of the previous release), the tour starts again with no question (the
     language was picked the first time) and walks only the 2.18 cards (the separator, the
-    RP2040 cartridge, the SNES Mouse, the music players, the NES music player and the saves
-    screen), then saves version 2."""
+    RP2040 cartridge, the SNES Mouse, the music players, the NES music player, the saves
+    screen and the file manager), then saves version 2."""
     sd = t.sd(config="---\nOnboardingVersion: 1\n")
     m = t.menu(sd)
-    _enter_tour(m, total=6, ask=False)
+    _enter_tour(m, total=7, ask=False)
     assert m.has(otr(f"onb_f{SECTION_218}_name")), m.text()
     m.press("RIGHT")
-    m.wait_text("2/6")
+    m.wait_text("2/7")
     m.step(30)
     assert m.has(otr(f"onb_f{C_RP2040}_name")), m.text()
     m.press("RIGHT")
-    m.wait_text("3/6")
+    m.wait_text("3/7")
     m.step(30)
     assert m.has(otr(f"onb_f{C_MOUSE}_name")), m.text()
     m.press("RIGHT")
-    m.wait_text("4/6")
+    m.wait_text("4/7")
     m.step(30)
     assert m.has(otr(f"onb_f{C_PLAYERS}_name")), m.text()
     m.press("RIGHT")
-    m.wait_text("5/6")
+    m.wait_text("5/7")
     m.step(30)
     assert m.has(otr(f"onb_f{C_NSF}_name")), m.text()
     m.press("RIGHT")
-    m.wait_text("6/6")
+    m.wait_text("6/7")
     m.step(30)
     assert m.has(otr(f"onb_f{C_SAVESCR}_name")), m.text()
+    m.press("RIGHT")
+    m.wait_text("7/7")
+    m.step(30)
+    assert m.has(otr(f"onb_f{C_FILEMGR}_name")), m.text()
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
     m.step(30)
@@ -798,7 +808,7 @@ def _replay_from(t, start, first):
         m.press("RIGHT")
         m.wait_text(f"{k}/{total}")
         m.step(30)                     # the card fades in; a press during the ramp is lost
-    assert m.has(otr(f"onb_f{C_SAVESCR}_name")), m.text()
+    assert m.has(otr(f"onb_f{C_FILEMGR}_name")), m.text()
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
     m.step(30)
@@ -1205,7 +1215,8 @@ def test_tour_card_order(t):
         "What's new in 2.17", "Controller 2 shortcuts/hooks", "Game Boy Color",
         "Shortcut/hook list", "Seta chips and bootlegs", "Super 20 in 1, Gamars, .sfrom",
         "Icons in the list", "Cheats from the game info", "What's new in 2.18",
-        name(C_RP2040), "SNES Mouse", "Music players", "NES music (.nsf)", "Saves screen"]
+        name(C_RP2040), "SNES Mouse", "Music players", "NES music (.nsf)", "Saves screen",
+        "File manager"]
     assert len(set(onb.NAMES[C_RP2040 - 1][:8])) == 1      # a proper noun: the same in every language
     items = [name(n) for n in range(NCARDS + 1, NCARDS + MORE_ITEMS + 1)]
     assert items == ["Clear PPU on boot", "Bus timing compat", "Hardware model",
@@ -1224,8 +1235,8 @@ def _descriptors():
 
 def test_tour_descriptors_per_board(t):
     """The cards of the cores only the FXPAK PRO (Mk.III) has (other consoles, the Atari's
-    controls, Game Boy Color) are flagged for it, the Mk.II's LED codes for the Mk.II: 45
-    cards on a Mk.III, 43 on a Mk.II. The dependencies point at the right parents after the
+    controls, Game Boy Color) are flagged for it, the Mk.II's LED codes for the Mk.II: 46
+    cards on a Mk.III, 44 on a Mk.II. The dependencies point at the right parents after the
     reorder, and the hook flags sit on the in-game menu, savestates and controller 2 cards."""
     d = {n: (dep, dep2, fl, opt) for n, dep, dep2, fl, opt in _descriptors()}
     assert sorted(d) == list(range(1, NCARDS + MORE_ITEMS + 1)), sorted(d)
@@ -1233,8 +1244,8 @@ def test_tour_descriptors_per_board(t):
     mk2 = [n for n in d if "ONB_FF_MK2ONLY" in d[n][2]]
     assert mk3 == list(MK3ONLY) and mk2 == list(MK2ONLY), (mk3, mk2)
     cards = range(1, NCARDS + 1)
-    assert len([n for n in cards if n not in mk2]) == 45
-    assert len([n for n in cards if n not in mk3]) == 43
+    assert len([n for n in cards if n not in mk2]) == 46
+    assert len([n for n in cards if n not in mk3]) == 44
     hook = {n for n in d if "ONB_FF_HOOK" in d[n][2]}
     assert hook == {C_IGM, C_STATES, C_PAD2}, hook
     assert "ONB_FF_BUTTONS" in d[C_PAD2][2]

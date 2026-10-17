@@ -40,10 +40,15 @@ def test_y_on_msu_folder_opens_rom_context(t):
     assert m.u16("window_stack_head") == 0xFFFF
 
 
-def test_y_on_plain_folder_is_inert(t):
+def test_y_on_plain_folder_has_only_file_rows(t):
+    """Uma pasta comum não tem menu de contexto próprio: o Y mostra só as linhas do
+    gerenciador de arquivos (test_file_manager.py), e não entra na pasta."""
     m = t.menu()
-    before = _open_context(m, "Two Games/")
-    assert m.text() == before, "Y numa pasta comum mudou a tela\n" + m.text()
+    _open_context(m, "Two Games/")
+    assert m.has(c.tr("mtext_fm_copy")), m.text()
+    assert not m.has(c.tr("text_filesel_context_add_to_favorites")), m.text()
+    m.press("B")
+    m.settle()
     assert m.u16("window_stack_head") == 0xFFFF and m.u8("msu_inside") == 0
 
 

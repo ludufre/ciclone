@@ -83,7 +83,9 @@ class T:
         sd = sd or self.sd()
         m = c.Menu(sd, self.dir / f"run{len(self.menus) + 1}", env=env)
         self.menus.append(m)
-        m.wait(lambda: m.u16("listdisp") and m.list_rows(), frames=1200, what="o browser")
+        # listdisp is the list's row count (18 on NTSC): before the menu's own init the WRAM
+        # holds whatever it powered up with, and a nonzero word there is no browser yet
+        m.wait(lambda: 0 < m.u16("listdisp") <= 32 and m.list_rows(), frames=1200, what="o browser")
         m.settle()
         # a lista aparece por volta do quadro 10, mas um aperto nos primeiros ~30 quadros
         # ainda se perde (o menu termina de subir -- música, capa). Uma pessoa nunca aperta
