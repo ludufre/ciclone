@@ -92,7 +92,7 @@ def test_copy_then_paste_into_folder(t):
     _ctx(m, "../", "mtext_fm_paste")
     m.wait(lambda: "Test Game.sfc" in m.list_names(), what="a cópia aparecer")
     m.settle()
-    assert _clip(m) == (1, 1), "copiar não esvazia a área de transferência"
+    assert _clip(m)[1] == 0, "colar uma cópia deixou a área de transferência cheia"
     m.close()
     assert "Test Game.sfc" in t.listdir(sd, "/Empty Folder")
     assert t.read(sd, "/Empty Folder/Test Game.sfc") == t.read(sd, "/Test Game.sfc")

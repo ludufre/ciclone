@@ -41,8 +41,22 @@ int ciclone_sd_open(const char *path) {
 
 uint32_t ciclone_sd_sectorcount(void) { return g_sectors; }
 
+/* CICLONE_SD_IOTRACE=<file>: every command, reads AND writes, "R lba count" / "W lba count"
+   (CICLONE_SD_TRACE keeps its reads-only format, which tests count lines of). */
+static void iotrace(char kind, uint32_t lba, uint32_t count) {
+  static FILE *f;
+  static int init;
+  if (!init) {
+    init = 1;
+    const char *t = getenv("CICLONE_SD_IOTRACE");
+    if (t && *t) f = fopen(t, "w");
+  }
+  if (f) { fprintf(f, "%c %u %u\n", kind, lba, count); fflush(f); }
+}
+
 int ciclone_sd_read(uint32_t lba, uint8_t *buf, uint32_t count) {
   if (!g_img) return 1;
+  iotrace('R', lba, count);
   /* CICLONE_SD_TRACE=<file>: one line per read, "lba count" */
   static FILE *trace;
   static int trace_init;
@@ -79,6 +93,7 @@ int ciclone_sd_read(uint32_t lba, uint8_t *buf, uint32_t count) {
 
 int ciclone_sd_write(uint32_t lba, const uint8_t *buf, uint32_t count) {
   if (!g_img) return 1;
+  iotrace('W', lba, count);
   g_rd_streaming = 0;
   if (fseek(g_img, (long)lba * SECTOR_SIZE, SEEK_SET) != 0) return 1;
   size_t want = (size_t)count * SECTOR_SIZE;
