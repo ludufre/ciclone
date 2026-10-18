@@ -72,7 +72,9 @@ def test_delete_rom_from_context(t):
     _open_context(m, "Test Game.sfc")
     delete = c.tr("text_filesel_context_delete_file")
     assert m.has(delete), m.text()
-    for _ in range(3):                             # Add to favorites, Cheats, Set as autoboot, Delete
+    for _ in range(30):                            # Delete is the menu's last row
+        if delete in m.bar_row():
+            break
         m.press("DOWN")
         m.settle(stable=6)
     m.press("A")
@@ -129,3 +131,40 @@ def test_cheats_from_msu_folder_context_returns_to_the_parent(t):
     log = m.fwlog()
     assert "cmd: 85" not in log, "o menu mandou o ack $55 como comando\n" + log[-2000:]
     m.close()
+
+
+def _last_row_is_delete(m):
+    """Down to the bottom of the (scrolling) context menu: the bar ends on Delete."""
+    want = c.tr("text_filesel_context_delete_file")
+    for _ in range(30):
+        m.press("DOWN")
+        m.step(8)
+    assert want in m.bar_row(), f"the last row is not Delete\n{m.text()}"
+
+
+def test_delete_is_the_last_row_in_the_browser(t):
+    m = t.menu()
+    m.goto("Test Game.sfc")
+    m.press("Y")
+    m.settle()
+    _last_row_is_delete(m)
+
+
+def test_delete_is_the_last_row_in_recents_and_favorites(t):
+    sd = t.sd(extra={"/sd2snes/lastgame.cfg": b"/Test Game.sfc\0",
+                     "/sd2snes/favorites.cfg": b"/Test Game.sfc\0"})
+    m = t.menu(sd)
+    m.press("START")
+    m.wait_text(c.tr("text_last"))
+    m.press("Y")
+    m.settle()
+    _last_row_is_delete(m)
+    m.press("B")
+    m.settle()
+    m.press("B")
+    m.settle()
+    m.press("SEL")
+    m.wait_text(c.tr("text_favorite"))
+    m.press("Y")
+    m.settle()
+    _last_row_is_delete(m)

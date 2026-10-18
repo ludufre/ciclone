@@ -89,7 +89,9 @@ def test_a_write_to_the_card_drops_the_index(t):
     m.goto("Super Beta.sfc")
     m.press("Y")
     m.settle()
-    for _ in range(3):                             # Add to favorites, Cheats, Set as autoboot, Delete
+    for _ in range(30):                            # Delete is the menu's last row
+        if c.tr("text_filesel_context_delete_file") in m.bar_row():
+            break
         m.press("DOWN")
         m.settle(stable=6)
     m.press("A")
