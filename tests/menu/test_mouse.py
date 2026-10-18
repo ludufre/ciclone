@@ -403,17 +403,16 @@ def test_game_info_description_click_opens_the_full_text(t):
 
 
 def test_game_info_footer_click_presses_its_key(t):
+    """A click on a footer label presses its key: "Desc" is Y (a mouse glyph, the right
+    button held), the full description. The footer has no "B: Back" (right click is B)."""
     m = _ficha(t)
     row = m.screen()[26]
-    h = row.find("Back")                          # B's label (its key is a mouse glyph)
+    h = row.find("Desc")
     assert h >= 0, row
-    h -= 4
-    assert h >= 0, row
-    _point(m, 4 * (h + 4) + 1, 26 * 8 + 4)        # on the label after "B:"
+    _point(m, 4 * h + 1, 26 * 8 + 4)
     m.mouse_click("left")
-    m.wait(lambda: m.u16("screen_dma_disable") == 0, what="voltar ao browser")
-    m.settle()
-    assert m.list_names() == ROOT
+    m.wait(lambda: m.u8("gi_desc_full") == 1, what="a descrição em tela cheia")
+    assert m.u16("screen_dma_disable") == 1
 
 
 def test_game_info_clip_and_pointer_share_the_palette_without_flicker(t):
