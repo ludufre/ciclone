@@ -32,7 +32,7 @@ public:
 
   // ---- ciclo de vida ----
   virtual void    reset() {}
-  virtual void    reconfigure(int core) { (void)core; }  // fpga_pgm: troca core/mapper, zera SNESCMD (1 = fpga_sms)
+  virtual void    reconfigure(int core) { (void)core; }  // fpga_pgm: troca core/mapper, zera SNESCMD (1 = fpga_sms, 2 = fpga_dsp)
 
   // ---- introspecção (testes/debug) ----
   virtual uint8_t *psram_ptr() { return nullptr; }

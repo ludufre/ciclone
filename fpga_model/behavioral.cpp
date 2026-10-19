@@ -77,7 +77,18 @@ enum Phase {
   PH_WRITEMEM, PH_READMEM, PH_SCADDR, PH_SCREAD, PH_SCWRITE,
   PH_TEST, PH_STATUS, PH_SFX, PH_DACADDR, PH_DACPTR,
   PH_FEATURE, PH_CHEAT_IDX, PH_CHEAT, PH_DMAOP, PH_DMABUSY,
+  PH_DSPPGM, PH_DSPDAT, PH_DSPRST, PH_CHIPFEAT,
 };
+
+// DSP-1..4 (fpga_dsp): the uPD7725 runs in bsnes's NECDSP (chip/sd2snes/sd2snes.cpp). The model
+// keeps the program/data ROM the MCU streams over SPI ($E8-$EB) and hands it over on the next
+// SNES access; weak no-ops so a build without that libsnes still links.
+extern "C" {
+  void    __attribute__((weak)) ciclone_necdsp_load(const uint32_t *pgm, int npgm, const uint16_t *dat, int ndat)
+          { (void)pgm; (void)npgm; (void)dat; (void)ndat; }
+  uint8_t __attribute__((weak)) ciclone_necdsp_read(int a0) { (void)a0; return 0; }
+  void    __attribute__((weak)) ciclone_necdsp_write(int a0, uint8_t d) { (void)a0; (void)d; }
+}
 enum MaskWhich { MW_ROM, MW_RAM };
 
 class Behavioral : public FpgaModel {
@@ -105,6 +116,8 @@ public:
     memset(snescmd, 0, sizeof(snescmd)); phase = PH_CMD;
     // core 1 = fpga_sms: the Verilated SMS core takes over $E0-$E3/$EF (sms_model.cpp)
     sms_on = false;
+    dsp_on = core == 2;
+    if (dsp_on) { dsp_loaded = false; memset(dsp_pgm, 0, sizeof dsp_pgm); memset(dsp_dat, 0, sizeof dsp_dat); }
     if (core == 1) {
       if (!sms) sms = make_sms_core(psram.data());
       if (sms) { sms->power_on(); sms_on = true; }
@@ -230,6 +243,30 @@ private:
   uint32_t cursor, rom_mask, ram_mask;
   uint8_t  ram_base, map;
   uint16_t features, status;
+
+  // ---- fpga_dsp (DSP-1..4 on the uPD7725)
+  bool     dsp_on = false;
+  uint16_t dsp_feat = 0;                 // CHIPFEAT: [15] DSP-1 also at bank $4F
+  uint32_t dsp_pgm[2048] = {};
+  uint16_t dsp_dat[1024] = {};
+  int      dsp_npgm = 0, dsp_ndat = 0;    // write pointers ($E8 rewinds them)
+  bool     dsp_loaded = false;
+  std::atomic<bool> dsp_dirty{false};
+  // address.v dspx_enable / dspx_a0 for FEAT_DSPX (the event-cart maps are not modelled)
+  int dsp_select(uint32_t a) const {
+    if (!dsp_on || !(features & 1)) return -1;
+    bool a15 = a & 0x8000, a22 = a & 0x400000, a21 = a & 0x200000, a20 = a & 0x100000;
+    if (map == 1) {
+      bool hit = (a22 && a21 && !a20 && !a15) || (!a22 && a21 && a20 && a15)
+              || ((dsp_feat & 0x8000) && ((a >> 16) & 0xff) == 0x4F && a15);
+      return hit ? ((a >> 14) & 1) : -1;
+    }
+    if (map == 0) {
+      bool hit = !a22 && !a21 && !a20 && !a15 && (a & 0x6000) == 0x6000;
+      return hit ? ((a >> 12) & 1) : -1;
+    }
+    return -1;
+  }
 
   // ---- in-game hook (cheat.v). The MCU sets the flags and ROM cheats over SPI; everything
   // else is SNES-thread state (the read path takes no lock, see runner.cpp), hence the atomic.
@@ -391,6 +428,11 @@ private:
         else if (tx == 0xd3) { phase = PH_CHEAT_IDX; }                              // CHEAT_WRITE idx + 32 bits
         else if (tx == 0xd4) { phase = PH_DMAOP; cnt = 0; }                         // copier: dma_r[0..9]
         else if (tx == 0xd5) { phase = PH_DMABUSY; }                                // copier busy (never: instant)
+        else if (tx == 0xe8 && dsp_on) { dsp_npgm = dsp_ndat = 0; phase = PH_SKIP; }   // DSPx: reset PGM/DAT pointer (the ROM stays)
+        else if (tx == 0xe9 && dsp_on) { phase = PH_DSPPGM; cnt = 3; acc = 0; }        // DSPx: 24-bit PGM word (+2 dummy)
+        else if (tx == 0xea && dsp_on) { phase = PH_DSPDAT; cnt = 2; acc = 0; }        // DSPx: 16-bit DAT word (+2 dummy)
+        else if (tx == 0xeb && dsp_on) { phase = PH_DSPRST; }                          // DSPx: reset control
+        else if (tx == 0xef) { phase = PH_CHIPFEAT; cnt = 2; acc = 0; }             // CHIPFEAT -> dsp_feat (MSB first)
         else                 { phase = PH_SKIP; }
         return 0;
       }
@@ -456,6 +498,17 @@ private:
         if (cnt < 10) dma_reg_write(cnt++, tx);
         return 0;
       case PH_DMABUSY: return 0;
+      case PH_DSPPGM:
+        acc = (acc << 8) | tx;
+        if (--cnt == 0) { if (dsp_npgm < 2048) dsp_pgm[dsp_npgm++] = acc & 0xFFFFFF; dsp_loaded = true; dsp_dirty = true; phase = PH_SKIP; }
+        return 0;
+      case PH_DSPDAT:
+        acc = (acc << 8) | tx;
+        if (--cnt == 0) { if (dsp_ndat < 1024) dsp_dat[dsp_ndat++] = acc & 0xFFFF; dsp_dirty = true; phase = PH_SKIP; }
+        return 0;
+      case PH_DSPRST: dsp_dirty = true; phase = PH_SKIP; return 0;
+      case PH_CHIPFEAT:
+        acc = (acc << 8) | tx; if (--cnt == 0) { dsp_feat = acc & 0xffff; phase = PH_SKIP; } return 0;
       case PH_TEST: return 0xa5;
       case PH_STATUS: { uint16_t st = (status & ~0x4000) | (dac_rd >= 1024 ? 0x4000 : 0);
                         uint8_t v = (status_idx == 2) ? (st >> 8) : (st & 0xff);
@@ -510,6 +563,12 @@ private:
         if (rw) { snescmd[i] = d; return 0; }
         return snescmd[i];
       }
+    }
+    int a0 = dsp_select(a);
+    if (a0 >= 0) {
+      if (dsp_dirty.exchange(false)) { ciclone_necdsp_load(dsp_pgm, dsp_loaded ? 2048 : 0, dsp_dat, 1024); }
+      if (rw) { ciclone_necdsp_write(a0, d); return 0; }
+      return ciclone_necdsp_read(a0);
     }
     uint8_t bank = (a >> 16) & 0xff;
     uint16_t off = a & 0xffff;

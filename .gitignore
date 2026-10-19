@@ -31,3 +31,8 @@ __pycache__/
 
 # per-tree build dirs a script may be pointed at (CICLONE_BUILD)
 /build-*/
+
+# chip firmware/BIOS dumps for the tests that need them (tests/menu/test_dsp.py); only the
+# README is versioned
+/bios/*
+!/bios/README.md

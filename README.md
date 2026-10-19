@@ -434,8 +434,11 @@ Ciclone is for **fast iteration**; the **final sign-off** is still a real build 
 
 In practice most loops happen in `run/dev.sh` / `run/test_menu.sh`; the hardware is for closing out.
 Plain LoROM/HiROM games, the in-game menu, savestates, gestures and cheats run (see *Real games* above),
-and Master System games on the SMS core's RTL (see *Master System games*), but not covered: the other
-consoles' cores (NES, GBC, Atari) and coprocessor cores (and their savestate windows), the `ctx.v` WRAM/VRAM/APU mirrors (the
+Master System games on the SMS core's RTL (see *Master System games*), and DSP-1..4 carts: the dsp core's
+address decoder is modeled and the uPD7725 runs in bsnes's NECDSP, loaded with the firmware the MCU streams
+(`tests/menu/test_dsp.py`; the chip firmware comes from `bios/`, git-ignored like `roms/`). Not covered: the
+other consoles' cores (NES, GBC, Atari), the other coprocessor cores (and their savestate windows), the DSP's
+savestate window and the event-cart maps, the `ctx.v` WRAM/VRAM/APU mirrors (the
 savestate overwrites what it takes from them with a read-back of the console, so only the APU image in
 the state file is missing), hardware timing, audio.
 

@@ -18,6 +18,8 @@ DKC2 = 0x006364DB   # Donkey Kong Country 2 - Diddy's Kong Quest (USA) (En,Fr) v
 KI = 0x252C1DA7     # Killer Instinct (USA): HiROM, 4 MB, no coprocessor
 KI_R1 = 0x09E9A04E  # Killer Instinct (USA) (Rev 1)
 KI_EU = 0x3D7252D4  # Killer Instinct (Europe)
+HIND = 0xDA955CF2       # Hind Strike (clean dump): LoROM DSP-1, the DSP answered at bank $4F
+HIND_CRACK = 0x0C62A02F # Hind Strike (cracked): the same game patched to talk to the DSP at $3F
 
 SMW_MODE = 0x7E0100       # game mode: $07 title, $08 file select, $0E overworld, $14 level
 SMW_MARIO_X = 0x7E0094
@@ -463,6 +465,32 @@ def test_pad2_savestate_saves_once(t):
     m.step(300)
     saves = m.fwlog().count(f"file_open ({SMW_STATE}, 0a)")
     assert saves == 1, f"{saves} state writes"
+
+
+def _title_colors(m) -> int:
+    """Distinct colours on an 8x7 grid of the screen: the black screen of a game stuck on its
+    coprocessor has one, a drawn title screen has many."""
+    return len({m.rgb(16 + x * 32, 16 + y * 32) for x in range(8) for y in range(7)})
+
+
+def _hind_strike(t, crc, what, chipfeat):
+    extra = {"/sd2snes/dsp1b.bin": c.bios("dsp1b.bin", 8192), "/sd2snes/fpga_dsp.bi3": b"\0" * 1024}
+    m = _play(t, "Hind Strike.sfc", c.game_rom(crc, what), extra)
+    assert f"chipfeat <= {chipfeat}" in m.fwlog(), m.fwlog()[-1500:]
+    # the game talks to the DSP-1 before drawing anything: without it the screen stays black
+    m.wait(lambda: _title_colors(m) >= 8, frames=1800, what="the title screen")
+    m.close()
+
+
+def test_hind_strike_clean_dump_dsp_at_bank_4f(t):
+    """The original dump reaches its title screen: the firmware sets dsp_feat[15] (4 wait states
+    + bit 15) and the core answers the DSP-1 at $4F."""
+    _hind_strike(t, HIND, "Hind Strike (clean dump)", 32772)
+
+
+def test_hind_strike_cracked_dsp_at_3f(t):
+    """The cracked dump moved every DSP access to $3F: plain DSP-1 LoROM, no bank-$4F bit."""
+    _hind_strike(t, HIND_CRACK, "Hind Strike (cracked)", 4)
 
 
 def _ovl_text(m):

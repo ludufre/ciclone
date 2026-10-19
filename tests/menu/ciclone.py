@@ -73,6 +73,19 @@ def game_rom(crc: int, what: str, exts: tuple = ROM_EXTS) -> bytes:
     raise Skip(f"{what} (CRC32 {crc:08x}) not found under {top}")
 
 
+def bios(name: str, size: int | None = None) -> bytes:
+    """A chip firmware dump (e.g. dsp1b.bin) from bios/ or $CICLONE_BIOS: chip firmware never goes
+    into the repo, so a test that needs one skips when it is not on this machine."""
+    top = Path(os.environ.get("CICLONE_BIOS") or str(ROOT / "bios")).expanduser()
+    f = top / name
+    if not f.is_file():
+        raise Skip(f"{name}: put it in bios/ (or set CICLONE_BIOS)")
+    data = f.read_bytes()
+    if size is not None and len(data) != size:
+        raise Skip(f"{f}: {len(data)} bytes, expected {size}")
+    return data
+
+
 def sms_player() -> bytes:
     """The SMS player of the firmware tree (snes/sms/sms_snes.asm, assembled by
     tools/build_sms_player.sh): the SNES half of the SMS core, so the one that pairs with the

@@ -457,8 +457,11 @@ Porque:
 
 Na prática, a maioria das voltas fica no `run/dev.sh` / `run/test_menu.sh`; o hardware é pra fechar. Jogo
 LoROM/HiROM comum, o menu in-game, savestates, gestos e cheats rodam (ver *Jogos reais* acima), e jogos de
-Master System no RTL do core SMS (ver *Jogos de Master System*), mas não cobre: os cores dos outros consoles
-(NES, GBC, Atari), cores de coprocessador (e as janelas de savestate deles), os espelhos de WRAM/VRAM/APU do `ctx.v`
+Master System no RTL do core SMS (ver *Jogos de Master System*), e cartuchos DSP-1..4: o decodificador de
+endereço do core dsp é modelado e o uPD7725 roda no NECDSP do bsnes, carregado com o firmware que o MCU manda
+(`tests/menu/test_dsp.py`; o firmware do chip vem de `bios/`, ignorada pelo git como a `roms/`). Não cobre: os
+cores dos outros consoles (NES, GBC, Atari), os outros cores de coprocessador (e as janelas de savestate deles),
+a janela de savestate do DSP e os mapas das cartas de evento, os espelhos de WRAM/VRAM/APU do `ctx.v`
 (o savestate sobrescreve o que tira deles com leitura direta do console, então só falta a imagem da APU
 no arquivo), timing de hardware nem áudio.
 
