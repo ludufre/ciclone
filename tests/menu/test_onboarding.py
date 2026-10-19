@@ -65,7 +65,8 @@ def test_seen_tour_starts_with_no_question(t):
     m = t.menu(t.sd(config="---\nOnboardingVersion: 1\nLanguage: 1\n"))
     m.wait(lambda: "/sd2snes/onboarding.bin" in m.fwlog(), frames=900, what="a carga do tour")
     assert not m.has(c.encode_menu_text(c.tr("text_onbg_question", "ptbr"))), m.text()
-    m.wait(lambda: m.has("1/8"), frames=1500, what="o primeiro card do tour")
+    m.wait(lambda: m.has(f"1/{NCARDS - SECTION_218 + 1}"), frames=1500,
+           what="o primeiro card do tour")     # only the 2.18 section
     m.step(30)
     assert m.has(otr(f"onb_f{SECTION_218}_name", "ptbr")), m.text()
 
@@ -84,10 +85,10 @@ def test_seen_tour_missing_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 48         # card descriptors (onb_feat_table); the header counts the ones shown
+NCARDS = 54         # card descriptors (onb_feat_table); the header counts the ones shown
 MORE_CARD = 32      # "and more": the base tour's last card, 8 items
 SECTION_CARD = 33   # the 2.17 section's opening card, then the release's cards (34..40)
-SECTION_218 = 41    # the 2.18 section's opening card, then its cards (42..48)
+SECTION_218 = 41    # the 2.18 section's opening card, then its cards (42..54)
 MORE_ITEMS = 8
 # the cards by descriptor number (onb_fN_name)
 C_THEME, C_OUTLINE, C_AA, C_COVERS, C_COVLISTS, C_GI, C_VIDEO, C_CLIPMUSIC = 2, 3, 4, 5, 6, 7, 8, 9
@@ -96,12 +97,13 @@ C_IGM, C_STATES, C_SAVES, C_TRAINER, C_PATCHES, C_CREATEROM, C_CHIPS = 18, 19, 2
 C_SUFAMI, C_CCTIME, C_CONSOLES, C_ATARI, C_FOLDERS, C_MEMTEST, C_LED = 25, 26, 27, 28, 29, 30, 31
 C_PAD2, C_GBC, C_HOOKLIST, C_SETA, C_COL20, C_ICONS, C_GICHEATS = 34, 35, 36, 37, 38, 39, 40
 C_RP2040, C_MOUSE, C_PLAYERS, C_NSF, C_SAVESCR, C_FILEMGR, C_GAMEOPT = 42, 43, 44, 45, 46, 47, 48
+C_REPEAT, C_STOPMUSIC, C_CRC, C_RMDIR, C_GBROT, C_NDK10 = 49, 50, 51, 52, 53, 54
 # Cards shown on one board only (ONB_FF_MK3ONLY / ONB_FF_MK2ONLY): the Ciclone is a Mk.III,
 # so the Mk.II's LED card is left out of every walk and of the header's count.
 MK3ONLY = (C_CONSOLES, C_ATARI, C_GBC)
 MK2ONLY = (C_LED,)
 # cards a parent's off answer leaves out
-NO_RANDOM = (C_RANDOM,)                  # menu music off
+NO_RANDOM = (C_RANDOM, C_STOPMUSIC)      # menu music off: its two child cards
 NO_COVLISTS = (C_COVLISTS,)              # box art off
 NO_GI = (C_VIDEO, C_CLIPMUSIC)           # game info card off
 NO_VIDEO = (C_CLIPMUSIC,)                # its video off
@@ -152,8 +154,8 @@ def _enter_tour(m, lang="en", total=None, ask=True):
         m.wait_text(c.encode_menu_text(c.tr("text_onbg_question", lang)))
         m.press("A")
     m.wait(lambda: "/sd2snes/onboarding.bin" in m.fwlog(), frames=900, what="a carga do tour")
-    # the first card; "/12" when a card is left out (random music without music)
-    m.wait(lambda: m.has(f"1/{total}") if total else (m.has(f"1/{TOTAL}") or m.has(f"1/{TOTAL - 1}")),
+    # the first card; fewer when the music's cards are left out (menu music off)
+    m.wait(lambda: m.has(f"1/{total}") if total else (m.has(f"1/{TOTAL}") or m.has(f"1/{tot(NO_RANDOM)}")),
            frames=1500,
            what="o primeiro card do tour")
     m.step(30)                             # the card fades in; a press during the ramp is lost
@@ -176,7 +178,11 @@ def _list_lit(m, first):
     the list sits right under the card's paragraph, so its rows are found from the
     first answer's label. Sampled right of the labels, inside the bar's window (the
     list is in the left column: lowres x 10..115)."""
-    r0 = m.row_of(first)
+    # the row that holds only the label: a paragraph may start with the same word
+    # ("Yes: ..." on a card whose text names its answers)
+    want = c.encode_menu_text(first)
+    rows = [i for i, r in enumerate(m.screen()) if r.strip() == want]
+    r0 = rows[0] if rows else m.row_of(first)
     assert r0 is not None, m.text()
     return lambda k: m.rgb(100, (r0 + k) * 8 + 3)[2]
 
@@ -346,7 +352,9 @@ def test_tour_218_section(t):
     """The 2.18 section: its opening card, then the card of the cartridge with its own
     microcontroller (RP2040): an info-only card whose text names the dump file the game
     needs on the card; then the SNES Mouse card, the music players card and the NES music
-    (.nsf) card, info-only too; then "all set"."""
+    (.nsf) card, info-only too, the saves screen, the file manager, the game options, and the
+    six cards of the last round (repeat, music stop on the game info card, CRC32, folder
+    delete, rotated Game Boy buttons, the NTT keypad); then "all set"."""
     m = t.menu(t.sd(config=FRESH))
     _enter_tour(m)
     _goto_card(m, SECTION_218)
@@ -395,8 +403,14 @@ def test_tour_218_section(t):
     m.step(30)
     assert m.has(otr(f"onb_f{C_GAMEOPT}_name")), m.text()
     assert m.has(para(C_GAMEOPT)), m.text()
-    assert m.has("1CHIP"), m.text()                             # the one option there is, by its menu name
     assert c.UNKNOWN not in m.text(), m.text()
+    for n in (C_REPEAT, C_STOPMUSIC, C_CRC, C_RMDIR, C_GBROT, C_NDK10):
+        m.press("RIGHT")
+        m.wait_text(hdr(n))
+        m.step(30)
+        assert m.has(otr(f"onb_f{n}_name")), (n, m.text())
+        assert m.has(para(n)), (n, m.text())
+        assert c.UNKNOWN not in m.text(), (n, m.text())
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
 
@@ -406,39 +420,20 @@ def test_tour_new_release_shows_only_its_cards(t):
     saved (the tour of the previous release), the tour starts again with no question (the
     language was picked the first time) and walks only the 2.18 cards (the separator, the
     RP2040 cartridge, the SNES Mouse, the music players, the NES music player, the saves
-    screen, the file manager and the game options), then saves version 2."""
+    screen, the file manager, the game options, repeat, the music stop on the game info
+    card, CRC32, folder delete, rotated Game Boy buttons and the NTT keypad), then saves
+    version 2."""
+    cards = [n for n in shown() if n >= SECTION_218]
+    assert len(cards) == 14, cards
     sd = t.sd(config="---\nOnboardingVersion: 1\n")
     m = t.menu(sd)
-    _enter_tour(m, total=8, ask=False)
+    _enter_tour(m, total=len(cards), ask=False)
     assert m.has(otr(f"onb_f{SECTION_218}_name")), m.text()
-    m.press("RIGHT")
-    m.wait_text("2/8")
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_RP2040}_name")), m.text()
-    m.press("RIGHT")
-    m.wait_text("3/8")
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_MOUSE}_name")), m.text()
-    m.press("RIGHT")
-    m.wait_text("4/8")
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_PLAYERS}_name")), m.text()
-    m.press("RIGHT")
-    m.wait_text("5/8")
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_NSF}_name")), m.text()
-    m.press("RIGHT")
-    m.wait_text("6/8")
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_SAVESCR}_name")), m.text()
-    m.press("RIGHT")
-    m.wait_text("7/8")
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_FILEMGR}_name")), m.text()
-    m.press("RIGHT")
-    m.wait_text("8/8")
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_GAMEOPT}_name")), m.text()
+    for k, n in enumerate(cards[1:], 2):
+        m.press("RIGHT")
+        m.wait_text(f"{k}/{len(cards)}")
+        m.step(30)
+        assert m.has(otr(f"onb_f{n}_name")), (n, m.text())
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
     m.step(30)
@@ -819,7 +814,7 @@ def _replay_from(t, start, first):
         m.press("RIGHT")
         m.wait_text(f"{k}/{total}")
         m.step(30)                     # the card fades in; a press during the ramp is lost
-    assert m.has(otr(f"onb_f{C_GAMEOPT}_name")), m.text()
+    assert m.has(otr(f"onb_f{C_NDK10}_name")), m.text()       # the last card
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
     m.step(30)
@@ -1227,7 +1222,8 @@ def test_tour_card_order(t):
         "Shortcut/hook list", "Seta chips and bootlegs", "Super 20 in 1, Gamars, .sfrom",
         "Icons in the list", "Cheats from the game info", "What's new in 2.18",
         name(C_RP2040), "SNES Mouse", "Music players", "NES music (.nsf)", "Saves screen",
-        "File manager", "Game options"]
+        "File manager", "Game options", "Repeat in the players", "Stop music on game info",
+        "CRC32 on the game info", "Delete folders", "Rotated Game Boy buttons", "NTT Data Keypad"]
     assert len(set(onb.NAMES[C_RP2040 - 1][:8])) == 1      # a proper noun: the same in every language
     items = [name(n) for n in range(NCARDS + 1, NCARDS + MORE_ITEMS + 1)]
     assert items == ["Clear PPU on boot", "Bus timing compat", "Hardware model",
@@ -1255,8 +1251,8 @@ def test_tour_descriptors_per_board(t):
     mk2 = [n for n in d if "ONB_FF_MK2ONLY" in d[n][2]]
     assert mk3 == list(MK3ONLY) and mk2 == list(MK2ONLY), (mk3, mk2)
     cards = range(1, NCARDS + 1)
-    assert len([n for n in cards if n not in mk2]) == 47
-    assert len([n for n in cards if n not in mk3]) == 45
+    assert len([n for n in cards if n not in mk2]) == 53
+    assert len([n for n in cards if n not in mk3]) == 51
     hook = {n for n in d if "ONB_FF_HOOK" in d[n][2]}
     assert hook == {C_IGM, C_STATES, C_PAD2}, hook
     assert "ONB_FF_BUTTONS" in d[C_PAD2][2]
@@ -1266,6 +1262,7 @@ def test_tour_descriptors_per_board(t):
         C_VIDEO: ("!CFG_SHOW_GAME_INFO", "0"),
         C_CLIPMUSIC: ("!CFG_GAME_INFO_VIDEO", "!CFG_SHOW_GAME_INFO"),
         C_RANDOM: ("!CFG_ENABLE_MENU_MUSIC", "0"),
+        C_STOPMUSIC: ("!CFG_ENABLE_MENU_MUSIC", "0"),
         C_SAVES: ("!CFG_ENABLE_CHEAT_OVERLAY", "0"),
         C_TRAINER: ("!CFG_ENABLE_CHEAT_OVERLAY", "0"),
     }, parents
@@ -1445,3 +1442,73 @@ def test_tour_pad2_yes_turns_the_hook_and_buttons_on(t):
     cfg = _cfg(t, sd)
     for want in ("EnableIngamePad2: true", "EnableIngameHook: true", "EnableIngameButtons: true"):
         assert want in cfg, (want, cfg)
+
+
+def test_tour_218_new_cards_texts(t):
+    """The last 2.18 cards say what the user needs: the repeat card names the X key and the
+    three players, the music stop card says opening the game info card gets about a second
+    slower (the user asked for the cost to be plain), the CRC32 card names the 512-byte
+    header, the folder delete card says the sd2snes folder's saves stay. Every language has
+    the same number of lines on each of them (the list below must not move)."""
+    def words(n, lang="en"):
+        return " ".join(onb.STRINGS["onb_f%d_text" % n][onb.LANGS.index(lang)])
+    assert "[X]" in words(C_REPEAT) and ".nsf" in words(C_REPEAT), words(C_REPEAT)
+    assert "1 s slower" in words(C_STOPMUSIC), words(C_STOPMUSIC)
+    assert "1 s mais lento" in words(C_STOPMUSIC, "ptbr"), words(C_STOPMUSIC, "ptbr")
+    assert "512-byte" in words(C_CRC), words(C_CRC)
+    assert "sd2snes" in words(C_RMDIR), words(C_RMDIR)
+    for n in (C_REPEAT, C_STOPMUSIC, C_CRC, C_RMDIR, C_GBROT, C_NDK10, C_GAMEOPT):
+        assert len({len(v) for v in onb.STRINGS["onb_f%d_text" % n]}) == 1, n
+
+
+def test_tour_stop_music_card_depends_on_the_music(t):
+    """Stop music on game info is asked only with the menu music on (like random music):
+    its No is the saved default, Yes is saved as StopMusicOnGameInfo: true. Menu music Off
+    leaves it out."""
+    sd = t.sd(config=FRESH + "EnableMenuMusic: true\n")
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_STOPMUSIC)
+    assert m.has(otr(f"onb_f{C_STOPMUSIC}_name")), m.text()
+    lit = _list_lit(m, otr("onb_text_yes"))
+    m.wait(lambda: lit(1) > lit(0) + 40, what="a barra em Nao (o valor salvo)")
+    m.press("UP")                          # -> Yes
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_CRC))
+    _finish(m)
+    m.close()
+    assert "StopMusicOnGameInfo: true" in _cfg(t, sd), _cfg(t, sd)
+    m = t.menu(t.sd(config=FRESH + "EnableMenuMusic: true\n"))
+    _enter_tour(m)
+    _goto_card(m, C_MUSIC)
+    m.press("DOWN")                        # menu music: Yes -> No
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_SFX, NO_RANDOM))
+    _goto_card(m, C_CRC, NO_RANDOM)        # the music stop card is left out: Left from CRC32 lands on Repeat
+    m.press("LEFT")
+    m.wait_text(hdr(C_REPEAT, NO_RANDOM))
+    assert m.has(otr(f"onb_f{C_REPEAT}_name")), m.text()
+    m.close()
+
+
+def test_tour_rotated_game_boy_buttons_card_saves(t):
+    """The rotated Game Boy buttons card asks on both boards (the SGB has it on the Mk.II
+    too): No is the saved default, Yes is saved as GbRotateButtons: true."""
+    d = {n: fl for n, _, _, fl, _ in _descriptors()}
+    assert "MK3ONLY" not in d[C_GBROT] and "MK2ONLY" not in d[C_GBROT], d[C_GBROT]
+    sd = t.sd(config=FRESH)
+    m = t.menu(sd)
+    _enter_tour(m)
+    _goto_card(m, C_GBROT)
+    assert m.has(otr(f"onb_f{C_GBROT}_name")), m.text()
+    lit = _list_lit(m, otr("onb_text_yes"))
+    m.wait(lambda: lit(1) > lit(0) + 40, what="a barra em Nao (o valor salvo)")
+    m.press("UP")                          # -> Yes
+    m.step(10)
+    m.press("A")
+    m.wait_text(hdr(C_NDK10))
+    _finish(m)
+    m.close()
+    assert "GbRotateButtons: true" in _cfg(t, sd), _cfg(t, sd)
