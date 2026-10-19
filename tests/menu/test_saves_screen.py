@@ -1,6 +1,6 @@
 """A tela de Saves: o "Saves..." do menu de contexto (lista, Recentes, Favoritos) e o R da ficha
 abrem os saves e os savestates do jogo, um slot por linha, com a data na ordem do idioma e o
-tamanho; o slot com que o jogo inicia sai em verde (paleta 2). A num slot: usar ao iniciar (grava o .slot),
+tamanho; o slot com que o jogo inicia sai em verde (paleta 2). A num slot: usar ao iniciar (grava SaveGameSlot/SaveStateSlot no <stem>.yml),
 duplicar para outro slot do mesmo tipo, apagar."""
 import re
 import time
@@ -14,7 +14,8 @@ SRM1 = f"{SAVES}/Test Game.srm"
 SRM2 = f"{SAVES}/Test Game.02.srm"
 SRM3 = f"{SAVES}/Test Game.03.srm"
 ST1 = f"{STATES}/Test Game01.state"
-SLOT = f"{SAVES}/Test Game.slot"
+SLOT = f"{SAVES}/Test Game.slot"   # the slots of before (read when the .yml has none)
+YML = f"{SAVES}/Test Game.yml"
 SS_SLOTS = 0xFE100F                                # the savestate handler's current slot
 
 
@@ -200,7 +201,8 @@ def test_duplicate_over_a_save_asks_first(t):
 
 
 def test_use_when_starting_writes_the_slot_sidecar(t):
-    """Byte 0 = o slot do save de bateria, byte 1 = o do savestate ('1'..'4')."""
+    """Os slots com que o jogo inicia vao para o arquivo por jogo (<stem>.yml em saves/):
+    SaveGameSlot e SaveStateSlot, 1..4 (slot 1 = sem linha)."""
     sd = _card(t, {SRM1: b"\x5a" * 2048})
     m = t.menu(sd)
     _open_from_browser(m)
@@ -210,7 +212,22 @@ def test_use_when_starting_writes_the_slot_sidecar(t):
     _action(m, "text_saves_state", 3, "text_saves_use")
     m.wait(lambda: _starts(m, "text_saves_state", 3), what="o '*' no estado 3")
     m.close()
-    assert t.read(sd, SLOT) == b"23"
+    yml = t.read(sd, YML)
+    assert yml is not None and b"SaveGameSlot: 2\r\n" in yml and b"SaveStateSlot: 3\r\n" in yml, yml
+    assert t.read(sd, SLOT) is None
+
+
+def test_the_game_starts_on_the_savestate_slot_of_the_yml(t):
+    sd = _card(t, {}, extra={YML: b"---\r\nSaveStateSlot: 4\r\n"})
+    m = t.menu(sd)
+    m.goto("Test Game.sfc")
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="a ficha")
+    m.settle()
+    m.press("A")
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="o boot")
+    assert m.psram(SS_SLOTS, 1)[0] & 0x7f == 4, m.psram(SS_SLOTS, 1)
+    m.close()
 
 
 def test_the_game_starts_on_the_chosen_savestate_slot(t):

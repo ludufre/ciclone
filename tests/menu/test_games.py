@@ -550,7 +550,8 @@ SMW_SLOT = "/sd2snes/saves/SU/Super Mario World.slot"
 
 def test_savestate_slot_picked_in_game_is_remembered(t):
     """Select+Right picks savestate slot 2 in the game; leaving it writes that to the game's
-    .slot sidecar (byte 1, the battery-save byte kept), and the next start comes back on it."""
+    per-game file (SaveStateSlot of saves/<BB>/<stem>.yml; slot 1 of the battery save is no
+    line), and the next start comes back on it."""
     rom = c.game_rom(SMW, "Super Mario World (USA)")
     sd = t.sd(config="---\nEnableSavestateSlots: true\n", extra={"/Super Mario World.sfc": rom})
     m = t.menu(sd)
@@ -566,14 +567,21 @@ def test_savestate_slot_picked_in_game_is_remembered(t):
     m.step(20)
     m.release()
     m.wait(lambda: m.psram(SS_SLOT, 1)[0] & 0x7F == 2, frames=300, what="slot 2")
+    covers = m.fwlog().count("cover: try /Super Mario World.cov")
     m.hold("L", "R", "SEL", "X")                        # back to the menu
     m.step(30)
     m.release()
     m.wait(lambda: "Super Mario World.sfc" in m.list_names(), frames=1200, what="the menu")
+    # the list shows some 20-40 frames before the menu loop reads the pad again (a press in between
+    # is lost, on master too): wait for it to ask for the selected game's cover
+    m.wait(lambda: m.fwlog().count("cover: try /Super Mario World.cov") > covers
+           and m.u8("cover_request_pending") == 0, frames=300, what="the menu loop")
     m.press("A")
     m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game card again")
     m.press("A")
     m.wait(lambda: m.fwlog().count("going to snes main loop") == 2, frames=1800, what="the reboot")
     assert m.psram(SS_SLOT, 1)[0] & 0x7F == 2, "the game did not start on the slot picked last time"
     m.close()
-    assert t.read(sd, SMW_SLOT) == b"12", t.read(sd, SMW_SLOT)
+    yml = t.read(sd, SMW_SLOT.replace(".slot", ".yml"))
+    assert yml is not None and b"SaveStateSlot: 2\r\n" in yml and b"SaveGameSlot" not in yml, yml
+    assert t.read(sd, SMW_SLOT) is None
