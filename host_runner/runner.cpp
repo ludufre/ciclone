@@ -191,12 +191,22 @@ static void cart_frame(void) {
 }
 // CICLONE_PORT1=mouse / CICLONE_PORT2=mouse: a SNES Mouse in that port (its ID nibble is what the
 // hooks and the menus have to tell apart from a pad; the "mouse" command moves and clicks it).
+// CICLONE_PORT1=ntt / CICLONE_PORT2=ntt: an NTT Data Keypad (NDK10): a pad whose ID nibble is
+// 4 (serial bits 13-16 = 0100) instead of 0, plus a number pad in bits 17-32. Its 12 pad buttons
+// are the same libsnes ids 0-11 as a joypad's (istate below serves them); the keypad keys
+// (ids 16-31) read released.
 // bsnes puts its configured device back on every reset, so this runs after each one.
+static constexpr unsigned SNES_DEVICE_NTT_KEYPAD = 8;  // Input::Device::NTTDataKeypad (no libsnes define)
+static unsigned port_device(const char *v) {
+  if (!strcmp(v, "mouse")) return SNES_DEVICE_MOUSE;
+  if (!strcmp(v, "ntt")) return SNES_DEVICE_NTT_KEYPAD;
+  return SNES_DEVICE_JOYPAD;
+}
 static void apply_port1(void) {
   if (const char *p1 = getenv("CICLONE_PORT1"))
-    if (!strcmp(p1, "mouse")) snes_set_controller_port_device(SNES_PORT_1, SNES_DEVICE_MOUSE);
+    if (port_device(p1) != SNES_DEVICE_JOYPAD) snes_set_controller_port_device(SNES_PORT_1, port_device(p1));
   if (const char *p2 = getenv("CICLONE_PORT2"))
-    if (!strcmp(p2, "mouse")) snes_set_controller_port_device(SNES_PORT_2, SNES_DEVICE_MOUSE);
+    if (port_device(p2) != SNES_DEVICE_JOYPAD) snes_set_controller_port_device(SNES_PORT_2, port_device(p2));
 }
 // SNES time in master clocks, monotonic, for models that run their own clock against it (the
 // SMS core): completed frames + where the beam is since the point snes_run() stops at.
