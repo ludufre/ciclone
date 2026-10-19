@@ -46,17 +46,37 @@ def _builds(m):
     return [ln for ln in m.fwlog().splitlines() if ln.startswith("dirindex: ")]
 
 
+GI_CRC = 0xFF75C8            # +9 state: 2 = ready (the ROM's CRC32 on the title row)
+
+
+def _crc_ready(m):
+    return m.psram(GI_CRC, 12)[9] == 2
+
+
 def test_up_down_in_a_crowded_bucket_does_not_scan_it(t):
     sd, m = _card(t)
     m.goto("Super Alpha.sfc")
     m.press("A")
     m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has("Alpha Clip"), what="the first screen")
+    # The screen also hashes the ROM in the background (the CRC32 on its title row): one pass
+    # over the ROM, in its own folder, never in the bucket. Visit both games once so their
+    # CRC32 is cached, then count one Up/Down: the bucket's cost alone.
+    m.wait(lambda: _crc_ready(m), frames=1800, what="the first game's CRC32")
+    m.press("DOWN")
+    m.wait(lambda: m.has("Beta Clip"), frames=1200, what="the next game's screen")
+    before = m.sdstat()[0]
+    m.wait(lambda: _crc_ready(m), frames=1800, what="the next game's CRC32")
+    hashed = m.sdstat()[0] - before
+    m.settle()
+    m.press("UP")
+    m.wait(lambda: m.has("Alpha Clip") and _crc_ready(m), frames=1200, what="the first game again")
     m.settle()
     before = m.sdstat()[0]
     m.press("DOWN")
     m.wait(lambda: m.has("Beta Clip"), frames=1200, what="the next game's screen")
     read = m.sdstat()[0] - before
-    t.log("sectors for one Up/Down:", read)
+    t.log("sectors for one Up/Down:", read, "(the hash of the ROM, done before:", hashed, ")")
+    assert _crc_ready(m), "a revisit hashed the ROM again"
     # the sidecars' own data (the .yml, the .fmv's first frames, the start of the .qoa, the
     # guide's header) is ~160 sectors; one scan of the bucket alone is ~280, and the screen used
     # to make enough of them to read ~4900
