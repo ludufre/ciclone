@@ -730,3 +730,64 @@ def test_language_change_keeps_the_bar_on_the_pointer(t):
     assert bars[-1] == last - 1, bars
     walk = [b for b in bars if wy < b < last - 1]
     assert len(walk) <= 2, bars                   # first row once at most, then the pointer's
+
+
+def test_game_info_with_a_clip_keeps_all_the_motion(t):
+    """A clip on the game info screen: every new frame of it takes 2-3 frames (the MCU, two
+    VBlank windows) in which nobody reads the pad, and the mouse clears its counters at every
+    auto-read, so the pointer went ~25% slower. gi_fmv_advance turns the auto-read off until
+    the frame is up: the mouse keeps counting and the next read gets all of it (a few frames'
+    counts read at once can pass the menu's doubling threshold, so it may come out ahead)."""
+    import test_pcm_player as pp
+    info = "/sd2snes/info/TE/Test Game"
+    sd = t.sd(config="---\nShowGameInfo: 1\n", extra={
+        info + ".yml": b'---\ntitle: "Clip Probe"\nfmv: true\n', info + ".fmv": pp._fmv(120)})
+    m = t.menu(sd, env=MOUSE)
+    m.settle()
+    _point_row(m, "Test Game.sfc")
+    m.mouse_click("left")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1 and m.has("Clip Probe"), what="a ficha com vídeo")
+    m.step(60)
+    m.mouse_move(-200, 0, frames=100, after=10)
+    x0 = m.u16("mouse_x")
+    m.mouse_move(120, 0, frames=120, after=10)
+    assert m.u16("mouse_x") - x0 >= 120, (x0, m.u16("mouse_x"))
+
+
+def test_game_info_click_plays_only_on_the_image(t):
+    """A click plays the game only on the image band (the screenshot or clip, the cover):
+    on the title, the metadata or the gaps it does nothing."""
+    m = _ficha(t)
+    for y in (17 * 8 + 4, 20 * 8 + 4, 25 * 8 + 4):
+        _point(m, 100, y)
+        m.mouse_click("left")
+        m.step(60)
+        assert m.u16("screen_dma_disable") == 1, f"a ficha fechou com um clique em y={y}"
+        assert "going to snes main loop" not in m.fwlog(), f"o jogo iniciou com um clique em y={y}"
+    _point(m, 120, 60)
+    m.mouse_click("left")
+    m.wait(lambda: "going to snes main loop" in m.fwlog(), frames=1800, what="o jogo")
+
+
+def _footer_click(m, label):
+    row = m.screen()[26]
+    h = row.find(label)
+    assert h >= 0, row
+    _point(m, 4 * h + 1, 26 * 8 + 4)
+    m.mouse_click("left")
+
+
+def test_game_info_footer_options_and_saves(t):
+    """"L:Options" and "R:Saves" on the footer: L and R are keys no mouse button stands for,
+    and a click on them presses them like the other footer keys."""
+    import test_game_options as go
+    import test_saves_screen as sv
+    m = _ficha(t)
+    _footer_click(m, "Saves")
+    sv._wait_rows(m)
+    m.mouse_click("right")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1 and "Saves" in m.screen()[26], frames=600,
+           what="a ficha de volta")
+    m.settle()
+    _footer_click(m, "Options")
+    go._wait_screen(m)
