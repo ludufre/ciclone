@@ -85,10 +85,10 @@ def test_seen_tour_missing_counts_as_skip(t):
     assert SEEN in _cfg(t, sd)
 
 
-NCARDS = 54         # card descriptors (onb_feat_table); the header counts the ones shown
+NCARDS = 55         # card descriptors (onb_feat_table); the header counts the ones shown
 MORE_CARD = 32      # "and more": the base tour's last card, 8 items
 SECTION_CARD = 33   # the 2.17 section's opening card, then the release's cards (34..40)
-SECTION_218 = 41    # the 2.18 section's opening card, then its cards (42..54)
+SECTION_218 = 41    # the 2.18 section's opening card, then its cards (42..55)
 MORE_ITEMS = 8
 # the cards by descriptor number (onb_fN_name)
 C_THEME, C_OUTLINE, C_AA, C_COVERS, C_COVLISTS, C_GI, C_VIDEO, C_CLIPMUSIC = 2, 3, 4, 5, 6, 7, 8, 9
@@ -97,7 +97,7 @@ C_IGM, C_STATES, C_SAVES, C_TRAINER, C_PATCHES, C_CREATEROM, C_CHIPS = 18, 19, 2
 C_SUFAMI, C_CCTIME, C_CONSOLES, C_ATARI, C_FOLDERS, C_MEMTEST, C_LED = 25, 26, 27, 28, 29, 30, 31
 C_PAD2, C_GBC, C_HOOKLIST, C_SETA, C_COL20, C_ICONS, C_GICHEATS = 34, 35, 36, 37, 38, 39, 40
 C_RP2040, C_MOUSE, C_PLAYERS, C_NSF, C_SAVESCR, C_FILEMGR, C_RMDIR = 42, 43, 44, 45, 46, 47, 48
-C_GAMEOPT, C_REPEAT, C_STOPMUSIC, C_CRC, C_GBROT, C_NDK10 = 49, 50, 51, 52, 53, 54
+C_GAMEOPT, C_REPEAT, C_STOPMUSIC, C_CRC, C_GBROT, C_NDK10, C_LOCK = 49, 50, 51, 52, 53, 54, 55
 # Cards shown on one board only (ONB_FF_MK3ONLY / ONB_FF_MK2ONLY): the Ciclone is a Mk.III,
 # so the Mk.II's LED card is left out of every walk and of the header's count.
 MK3ONLY = (C_CONSOLES, C_ATARI, C_GBC)
@@ -398,7 +398,7 @@ def test_tour_218_section(t):
     assert m.has(otr(f"onb_f{C_FILEMGR}_name")), m.text()
     assert m.has(para(C_FILEMGR)), m.text()
     assert c.UNKNOWN not in m.text(), m.text()
-    for n in (C_RMDIR, C_GAMEOPT, C_REPEAT, C_STOPMUSIC, C_CRC, C_GBROT, C_NDK10):
+    for n in (C_RMDIR, C_GAMEOPT, C_REPEAT, C_STOPMUSIC, C_CRC, C_GBROT, C_NDK10, C_LOCK):
         m.press("RIGHT")
         m.wait_text(hdr(n))
         m.step(30)
@@ -418,7 +418,7 @@ def test_tour_new_release_shows_only_its_cards(t):
     card, CRC32, folder delete, rotated Game Boy buttons and the NTT keypad), then saves
     version 2."""
     cards = [n for n in shown() if n >= SECTION_218]
-    assert len(cards) == 14, cards
+    assert len(cards) == 15, cards
     sd = t.sd(config="---\nOnboardingVersion: 1\n")
     m = t.menu(sd)
     _enter_tour(m, total=len(cards), ask=False)
@@ -808,7 +808,7 @@ def _replay_from(t, start, first):
         m.press("RIGHT")
         m.wait_text(f"{k}/{total}")
         m.step(30)                     # the card fades in; a press during the ramp is lost
-    assert m.has(otr(f"onb_f{C_NDK10}_name")), m.text()       # the last card
+    assert m.has(otr(f"onb_f{C_LOCK}_name")), m.text()        # the last card
     m.press("RIGHT")
     m.wait_text(otr("onb_ui_done_title"))
     m.step(30)
@@ -1218,7 +1218,7 @@ def test_tour_card_order(t):
         name(C_RP2040), "SNES Mouse", "Music players", "NES music (.nsf)", "Saves screen",
         "File manager", "Delete folders", "Game options", "Repeat in the players",
         "Stop music on game info", "CRC32 on the game info", "Rotated Game Boy buttons",
-        "NTT Data Keypad"]
+        "NTT Data Keypad", "Change lock"]
     assert len(set(onb.NAMES[C_RP2040 - 1][:8])) == 1      # a proper noun: the same in every language
     items = [name(n) for n in range(NCARDS + 1, NCARDS + MORE_ITEMS + 1)]
     assert items == ["Clear PPU on boot", "Bus timing compat", "Hardware model",
@@ -1246,8 +1246,8 @@ def test_tour_descriptors_per_board(t):
     mk2 = [n for n in d if "ONB_FF_MK2ONLY" in d[n][2]]
     assert mk3 == list(MK3ONLY) and mk2 == list(MK2ONLY), (mk3, mk2)
     cards = range(1, NCARDS + 1)
-    assert len([n for n in cards if n not in mk2]) == 53
-    assert len([n for n in cards if n not in mk3]) == 51
+    assert len([n for n in cards if n not in mk2]) == 54
+    assert len([n for n in cards if n not in mk3]) == 52
     hook = {n for n in d if "ONB_FF_HOOK" in d[n][2]}
     assert hook == {C_IGM, C_STATES, C_PAD2}, hook
     assert "ONB_FF_BUTTONS" in d[C_PAD2][2]
@@ -1452,7 +1452,7 @@ def test_tour_218_new_cards_texts(t):
     assert "1 s mais lento" in words(C_STOPMUSIC, "ptbr"), words(C_STOPMUSIC, "ptbr")
     assert "512-byte" in words(C_CRC), words(C_CRC)
     assert "sd2snes" in words(C_RMDIR), words(C_RMDIR)
-    for n in (C_REPEAT, C_STOPMUSIC, C_CRC, C_RMDIR, C_GBROT, C_NDK10, C_GAMEOPT):
+    for n in (C_REPEAT, C_STOPMUSIC, C_CRC, C_RMDIR, C_GBROT, C_NDK10, C_GAMEOPT, C_LOCK):
         assert len({len(v) for v in onb.STRINGS["onb_f%d_text" % n]}) == 1, n
 
 

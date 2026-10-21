@@ -100,7 +100,7 @@ def _enter(m, total):
 def _walk(t, lang_idx, lang):
     sd = t.sd(config=f"---\nOnboardingVersion: 0\nLanguage: {lang_idx}\n")
     m = t.menu(sd)
-    total = 53                                     # the Mk.III's cards
+    total = 54                                     # the Mk.III's cards
     _enter(m, total)
     seen = 0
     for n in range(1, total + 1):
@@ -135,7 +135,7 @@ def test_language_card_switches_live(t):
     between the two (their glyphs 128+ are different sheets) and back to a Latin one."""
     sd = t.sd(config="---\nOnboardingVersion: 0\n")
     m = t.menu(sd)
-    _enter(m, 53)
+    _enter(m, 54)
     langs = ["en", "ptbr", "es", "de", "fr", "it", "ru", "nl", "ja", "zh"]
     for k in range(1, 10):                         # down to Chinese, through Japanese
         m.press("DOWN")
