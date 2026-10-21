@@ -96,8 +96,8 @@ C_MUSIC, C_RANDOM, C_SFX, C_MSU, C_PCM, C_SD2SNESDIR, C_RESET, C_CHEATLIST = 10,
 C_IGM, C_STATES, C_SAVES, C_TRAINER, C_PATCHES, C_CREATEROM, C_CHIPS = 18, 19, 20, 21, 22, 23, 24
 C_SUFAMI, C_CCTIME, C_CONSOLES, C_ATARI, C_FOLDERS, C_MEMTEST, C_LED = 25, 26, 27, 28, 29, 30, 31
 C_PAD2, C_GBC, C_HOOKLIST, C_SETA, C_COL20, C_ICONS, C_GICHEATS = 34, 35, 36, 37, 38, 39, 40
-C_RP2040, C_MOUSE, C_PLAYERS, C_NSF, C_SAVESCR, C_FILEMGR, C_GAMEOPT = 42, 43, 44, 45, 46, 47, 48
-C_REPEAT, C_STOPMUSIC, C_CRC, C_RMDIR, C_GBROT, C_NDK10 = 49, 50, 51, 52, 53, 54
+C_RP2040, C_MOUSE, C_PLAYERS, C_NSF, C_SAVESCR, C_FILEMGR, C_RMDIR = 42, 43, 44, 45, 46, 47, 48
+C_GAMEOPT, C_REPEAT, C_STOPMUSIC, C_CRC, C_GBROT, C_NDK10 = 49, 50, 51, 52, 53, 54
 # Cards shown on one board only (ONB_FF_MK3ONLY / ONB_FF_MK2ONLY): the Ciclone is a Mk.III,
 # so the Mk.II's LED card is left out of every walk and of the header's count.
 MK3ONLY = (C_CONSOLES, C_ATARI, C_GBC)
@@ -398,13 +398,7 @@ def test_tour_218_section(t):
     assert m.has(otr(f"onb_f{C_FILEMGR}_name")), m.text()
     assert m.has(para(C_FILEMGR)), m.text()
     assert c.UNKNOWN not in m.text(), m.text()
-    m.press("RIGHT")
-    m.wait_text(hdr(C_GAMEOPT))
-    m.step(30)
-    assert m.has(otr(f"onb_f{C_GAMEOPT}_name")), m.text()
-    assert m.has(para(C_GAMEOPT)), m.text()
-    assert c.UNKNOWN not in m.text(), m.text()
-    for n in (C_REPEAT, C_STOPMUSIC, C_CRC, C_RMDIR, C_GBROT, C_NDK10):
+    for n in (C_RMDIR, C_GAMEOPT, C_REPEAT, C_STOPMUSIC, C_CRC, C_GBROT, C_NDK10):
         m.press("RIGHT")
         m.wait_text(hdr(n))
         m.step(30)
@@ -1222,8 +1216,9 @@ def test_tour_card_order(t):
         "Shortcut/hook list", "Seta chips and bootlegs", "Super 20 in 1, Gamars, .sfrom",
         "Icons in the list", "Cheats from the game info", "What's new in 2.18",
         name(C_RP2040), "SNES Mouse", "Music players", "NES music (.nsf)", "Saves screen",
-        "File manager", "Game options", "Repeat in the players", "Stop music on game info",
-        "CRC32 on the game info", "Delete folders", "Rotated Game Boy buttons", "NTT Data Keypad"]
+        "File manager", "Delete folders", "Game options", "Repeat in the players",
+        "Stop music on game info", "CRC32 on the game info", "Rotated Game Boy buttons",
+        "NTT Data Keypad"]
     assert len(set(onb.NAMES[C_RP2040 - 1][:8])) == 1      # a proper noun: the same in every language
     items = [name(n) for n in range(NCARDS + 1, NCARDS + MORE_ITEMS + 1)]
     assert items == ["Clear PPU on boot", "Bus timing compat", "Hardware model",

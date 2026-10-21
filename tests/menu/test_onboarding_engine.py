@@ -291,7 +291,15 @@ def test_board_flags_do_not_turn_the_hook_on(t):
 
 # ---------------------------------------------------------------- 2. the font preview
 def _pristine_font():
-    src = (TREE / "snes" / "font.a65").read_text(errors="replace")
+    """The tour's copy of the font (the Makefile's onboarding/onb_font.a65): font.a65 with the
+    mouse glyphs drawn for text (fontedit.py tour_font)."""
+    import tempfile
+    sys.path.insert(0, str(TREE / "snes" / "utils"))
+    import fontedit
+    sys.path.pop(0)
+    with tempfile.TemporaryDirectory() as d:
+        fontedit.tour_font(TREE / "snes" / "font.a65", Path(d) / "onb_font.a65")
+        src = (Path(d) / "onb_font.a65").read_text(errors="replace")
     vals = []
     for line in src[re.search(r"^font\s+\.byt", src, re.M).start():].splitlines():
         line = line.split(";")[0]
