@@ -1218,7 +1218,7 @@ def test_tour_card_order(t):
         name(C_RP2040), "SNES Mouse", "Music players", "NES music (.nsf)", "Saves screen",
         "File manager", "Delete folders", "Game options", "Repeat in the players",
         "Stop music on game info", "CRC32 on the game info", "Rotated Game Boy buttons",
-        "NTT Data Keypad", "Change lock"]
+        "NTT Data Keypad", "Parental lock"]
     assert len(set(onb.NAMES[C_RP2040 - 1][:8])) == 1      # a proper noun: the same in every language
     items = [name(n) for n in range(NCARDS + 1, NCARDS + MORE_ITEMS + 1)]
     assert items == ["Clear PPU on boot", "Bus timing compat", "Hardware model",

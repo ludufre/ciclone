@@ -1,4 +1,4 @@
-"""The change lock (snes/lock.a65 + fmres.a65): a code of 4 to 10 pad buttons (LockCode in
+"""The parental lock (snes/lock.a65 + fmres.a65): a code of 4 to 10 pad buttons (LockCode in
 config.yml, the buttons as letters in order, "BYsSudlrAXLR"; 5 bytes of nibbles in CFG, B=1 Y=2
 Select=3 Start=4 ... R=12) asked before what changes the card or the settings.  Each button
 counts on its release; B held for three seconds leaves.  A new code ends at its 10th button
