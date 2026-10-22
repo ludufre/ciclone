@@ -278,3 +278,38 @@ def test_window_border_hides_the_glyph_it_cuts(t):
     title = [i for i in range(0, 0x2000, 64) if before[i:i + 64] != after[i:i + 64]]
     assert not title, f"rows not restored after closing: {[((i % 0x1000) // 64, i // 0x1000) for i in title][:8]}"
     _check(m, "back to the main menu")
+
+
+def test_japanese_game_info_footer_fits_its_row(t):
+    """The game-info footer of a game with a guide, opened from the browser (the variant with
+    X and the Up/Down hint). The screen has no BG2 glyph pool, so every glyph whose lead lands
+    on an even column is moved one column on: in Japanese the text used to run past column 61
+    and wrap, the half of a glyph in column 0 of the next row and the last glyph after it."""
+    import gzip
+    from test_gameinfo_assets import FIX, YML
+    sd = t.sd(config=f"---\nShowGameInfo: 1\nLanguage: {LANG_JA}\n", extra={
+        "/sd2snes/info/TE/Test Game.yml": YML,
+        "/sd2snes/info/TE/Test Game.man": gzip.decompress((FIX / "probe.man.gz").read_bytes()),
+    })
+    m = t.menu(sd)
+    m.goto("Test Game.sfc")
+    m.settle()
+    m.press("A")
+    m.wait(lambda: m.u16("screen_dma_disable") == 1, what="the game-info screen")
+    m.settle()
+    assert m.psram(0xFF0760, 1)[0] & 1, "no guide detected: not the footer with X"
+    bg1, bg2 = m.wram(0x7EB000, 0x1000), m.wram(0x7EA000, 0x1000)
+
+    def cell(row, col):              # hires: even columns on BG2, odd on BG1, a word per pair
+        buf = bg2 if col % 2 == 0 else bg1
+        i = row * 64 + (col // 2) * 2
+        return buf[i] | buf[i + 1] << 8
+
+    blank = cell(28, 0)              # rows 27..31 are blanked under the footer
+    foot = [col for col in range(64) if cell(26, col) != blank]
+    assert foot, "the footer row is empty"
+    assert max(foot) <= 61, f"the footer runs to column {max(foot)} (columns 2..61)"
+    spill = [col for col in range(64) if cell(27, col) != blank]
+    assert not spill, f"the footer wrapped onto row 27, columns {spill}"
+    _check(m, "game info footer", body_from=16)
+    m.shot(t.dir / "game_info_footer.png")
