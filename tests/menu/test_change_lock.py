@@ -61,6 +61,45 @@ def test_settings_asks_for_the_code_once(t):
     assert not _keypad(m) and m.has(c.tr("mtext_cfg_browser")), m.text()
 
 
+def test_settings_come_back_whole_from_browser_settings(t):
+    """Settings and Browser Settings are both rebuilt in WRAM (the lock's row, the "Stop music
+    on game info" row): the child opened from the parent must not take the parent's table.
+    Coming back, Settings showed the browser's rows inside its own window (seen on HW)."""
+    m = t.menu(t.sd())
+    _main_menu(m)
+    _row(m, "mtext_mm_cfg")
+    m.press("A")
+    m.settle()
+    assert m.has(c.tr("mtext_cfg_bsx")), m.text()
+    _row(m, "mtext_cfg_browser")
+    m.press("A")
+    m.settle()
+    assert m.has(c.tr("mtext_browser_sort")), "o Browser Settings não abriu\n" + m.text()
+    # the two tables stay in their own room: Browser Settings below the bank $C3 scratch
+    # (FM_SCR), Settings below FM_TAB (FM_TAB_CFG)
+    for base, limit in ((0x7E9500, 0x7E9800), (0x7E9000, 0x7E9400)):
+        end = base + 4
+        while m.wram(end)[0] != 0:
+            end += 23
+        assert end < limit, f"a tabela em {base:06X} vai até {end:06X} (limite {limit:06X})"
+    m.press("B")
+    m.settle()
+    txt = m.text()
+    assert not m.has(c.tr("mtext_browser_sort")), "as Configurações voltaram com as linhas do navegador\n" + txt
+    for label in ("mtext_cfg_time", "mtext_cfg_bsx", "mtext_cfg_browser", "mtext_lock_row", "mtext_cfg_tour"):
+        assert m.has(c.tr(label)), f"falta {label} nas Configurações\n" + txt
+    _row(m, "mtext_cfg_tour")                  # the rows still go where they say
+    want = c.encode_menu_text(c.tr("mtext_cfg_browser"))
+    for _ in range(30):
+        if want in m.bar_row():
+            break
+        m.press("UP")
+        m.step(6)
+    m.press("A")
+    m.settle()
+    assert m.has(c.tr("mtext_browser_sort")), m.text()
+
+
 def test_holding_b_cancels(t):
     m = t.menu(t.sd(config=LOCKED))
     _main_menu(m)
